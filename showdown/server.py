@@ -12,16 +12,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from showdown.engine import select_matchup, update_elo
+from showdown.engine import get_dynamic_k_factor, select_matchup, update_elo
 from showdown.models import (
+    AcceptCandidateRequest,
     AddCandidatesRequest,
+    Candidate,
     CandidateStats,
     CreateTournamentRequest,
     EvolveRequest,
     EvolveResponse,
     Match,
+    TournamentStatus,
     TriageRecord,
     TriageRequest,
+    TriageStatus,
     Tournament,
     VoteRequest,
 )
@@ -139,25 +143,38 @@ def record_vote(tournament_id: str, vote: VoteRequest):
     elo_a_before = stat_a.elo
     elo_b_before = stat_b.elo
 
+    k = get_dynamic_k_factor(stat_a.matches, stat_b.matches)
+
     if vote.winner == "a":
         score_a = 1.0
         stat_a.wins += 1
         stat_b.losses += 1
+        stat_a.matches += 1
+        stat_b.matches += 1
+        elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
     elif vote.winner == "b":
         score_a = 0.0
         stat_b.wins += 1
         stat_a.losses += 1
+        stat_a.matches += 1
+        stat_b.matches += 1
+        elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
     elif vote.winner == "tie":
         score_a = 0.5
         stat_a.ties += 1
         stat_b.ties += 1
+        stat_a.matches += 1
+        stat_b.matches += 1
+        elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
     else:  # both_bad
-        score_a = 0.5
+        stat_a.losses += 1
+        stat_b.losses += 1
+        stat_a.matches += 1
+        stat_b.matches += 1
+        penalty = round(k / 2.0, 2)
+        elo_a_after = max(100.0, round(elo_a_before - penalty, 2))
+        elo_b_after = max(100.0, round(elo_b_before - penalty, 2))
 
-    stat_a.matches += 1
-    stat_b.matches += 1
-
-    elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a)
     stat_a.elo = elo_a_after
     stat_b.elo = elo_b_after
 
@@ -236,15 +253,104 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Append the evolved candidates to the tournament
+    # Reload fresh tournament to avoid overwriting votes or triage recorded during generation
+    fresh_tournament = storage.load_tournament(tournament_id) or tournament
+    existing_ids = {c.id for c in fresh_tournament.candidates}
     for c in evolve_res.new_candidates:
-        tournament.candidates.append(c)
-        tournament.stats[c.id] = CandidateStats()
+        if c.id not in existing_ids:
+            fresh_tournament.candidates.append(c)
+            fresh_tournament.stats[c.id] = CandidateStats()
 
-    tournament.updated_at = time.time()
-    storage.save_tournament(tournament)
+    fresh_tournament.updated_at = time.time()
+    storage.save_tournament(fresh_tournament)
     return evolve_res
 
+
+@app.post("/api/tournaments/{tournament_id}/accept")
+def accept_candidate(tournament_id: str, req: AcceptCandidateRequest):
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    cand_map = {c.id: c for c in tournament.candidates}
+    if req.candidate_id not in cand_map:
+        raise HTTPException(status_code=400, detail="Candidate ID not found in tournament")
+
+    tournament.accepted_candidate_id = req.candidate_id
+    tournament.status = TournamentStatus.COMPLETED
+    tournament.updated_at = time.time()
+
+    tournament.triage[req.candidate_id] = TriageRecord(
+        status=TriageStatus.FAVORITE,
+        notes=req.notes or "Selected as tournament winner",
+        updated_at=time.time(),
+    )
+    storage.save_tournament(tournament)
+
+    accepted_cand = cand_map[req.candidate_id]
+    stat = tournament.stats.get(req.candidate_id, CandidateStats())
+
+    return {
+        "status": "completed",
+        "accepted_candidate_id": req.candidate_id,
+        "candidate": accepted_cand.model_dump(),
+        "elo": stat.elo,
+        "notes": req.notes,
+    }
+
+
+@app.get("/api/tournaments/{tournament_id}/wait")
+def wait_for_completion(
+    tournament_id: str,
+    timeout: int = Query(default=30, ge=1, le=120),
+    poll_interval: float = 0.5,
+):
+    """
+    Long-polling endpoint for autonomous agents to block until a human or judge
+    selects an accepted winning candidate or completes the tournament.
+    """
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
+
+        if tournament.status == TournamentStatus.COMPLETED and tournament.accepted_candidate_id:
+            cand_map = {c.id: c for c in tournament.candidates}
+            accepted_cand = cand_map.get(tournament.accepted_candidate_id)
+            stat = tournament.stats.get(tournament.accepted_candidate_id, CandidateStats())
+            return {
+                "completed": True,
+                "status": tournament.status.value,
+                "accepted_candidate": accepted_cand.model_dump() if accepted_cand else None,
+                "elo": stat.elo if stat else None,
+                "matches_played": len(tournament.matches),
+            }
+
+        time.sleep(poll_interval)
+
+    # Return current leading candidate if timeout expires
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    sorted_cands = sorted(
+        tournament.candidates,
+        key=lambda c: tournament.stats.get(c.id, CandidateStats()).elo,
+        reverse=True,
+    )
+    top_cand = sorted_cands[0] if sorted_cands else None
+    top_stat = tournament.stats.get(top_cand.id, CandidateStats()) if top_cand else None
+
+    return {
+        "completed": False,
+        "status": tournament.status.value,
+        "accepted_candidate": None,
+        "leading_candidate": top_cand.model_dump() if top_cand else None,
+        "leading_elo": top_stat.elo if top_stat else None,
+        "matches_played": len(tournament.matches),
+    }
 
 
 @app.get("/api/tournaments/{tournament_id}/export")
@@ -252,6 +358,7 @@ def export_tournament(
     tournament_id: str,
     format: str = "dpo",
     download: bool = False,
+    jsonl: bool = False,
 ):
     tournament = storage.load_tournament(tournament_id)
     if not tournament:
@@ -260,7 +367,6 @@ def export_tournament(
     cand_map = {c.id: c for c in tournament.candidates}
 
     if format == "dpo":
-        # Direct Preference Optimization pairs
         pairs = []
         for m in tournament.matches:
             if m.winner in ("a", "b"):
@@ -278,8 +384,32 @@ def export_tournament(
                         "timestamp": m.timestamp,
                     })
         content = pairs
-        media_type = "application/json"
-        filename = f"{tournament.id}_dpo.json"
+        filename = f"{tournament.id}_dpo.{'jsonl' if jsonl else 'json'}"
+
+    elif format == "kto":
+        kto_records = []
+        for cid, t_rec in tournament.triage.items():
+            cand = cand_map.get(cid)
+            if not cand:
+                continue
+            if t_rec.status in (TriageStatus.LIKED, TriageStatus.FAVORITE):
+                kto_records.append({
+                    "prompt": tournament.prompt or tournament.title,
+                    "completion": cand.content,
+                    "label": True,
+                    "candidate_id": cid,
+                    "status": t_rec.status.value,
+                })
+            elif t_rec.status == TriageStatus.DISLIKED:
+                kto_records.append({
+                    "prompt": tournament.prompt or tournament.title,
+                    "completion": cand.content,
+                    "label": False,
+                    "candidate_id": cid,
+                    "status": t_rec.status.value,
+                })
+        content = kto_records
+        filename = f"{tournament.id}_kto.{'jsonl' if jsonl else 'json'}"
 
     elif format == "leaderboard":
         sorted_cands = sorted(
@@ -300,16 +430,24 @@ def export_tournament(
             }
             for i, c in enumerate(sorted_cands)
         ]
-        media_type = "application/json"
-        filename = f"{tournament.id}_leaderboard.json"
+        filename = f"{tournament.id}_leaderboard.{'jsonl' if jsonl else 'json'}"
 
     else:
         content = tournament.model_dump()
-        media_type = "application/json"
         filename = f"{tournament.id}.json"
+
+    if jsonl and isinstance(content, list):
+        body = "\n".join(json.dumps(row) for row in content)
+        media_type = "application/x-ndjson"
+    else:
+        body = json.dumps(content, indent=2)
+        media_type = "application/json"
 
     if download:
         headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-        return Response(content=json.dumps(content, indent=2), media_type=media_type, headers=headers)
+        return Response(content=body, media_type=media_type, headers=headers)
+
+    if jsonl:
+        return Response(content=body, media_type=media_type)
 
     return content

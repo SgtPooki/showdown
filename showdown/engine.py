@@ -9,6 +9,22 @@ DEFAULT_ELO = 1200.0
 K_FACTOR = 32.0
 
 
+def get_dynamic_k_factor(matches_a: int = 0, matches_b: int = 0) -> float:
+    """
+    Calculate dynamic K-factor:
+    - High K (48.0) for early matches (< 5) to accelerate rating convergence.
+    - Medium K (32.0) for intermediate matches (5-15).
+    - Stable K (24.0) for well-evaluated candidates (>= 15).
+    """
+    avg_matches = (matches_a + matches_b) / 2.0
+    if avg_matches < 5:
+        return 48.0
+    elif avg_matches < 15:
+        return 32.0
+    else:
+        return 24.0
+
+
 def calculate_expected_score(rating_a: float, rating_b: float) -> float:
     """Calculate the expected score for player A against player B."""
     return 1.0 / (1.0 + math.pow(10.0, (rating_b - rating_a) / 400.0))

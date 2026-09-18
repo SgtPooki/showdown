@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -22,7 +22,7 @@ console = Console()
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host address"),
-    port: int = typer.Option(8091, "--port", "-p", help="Port number"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port number"),
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes"),
 ):
     """Start the Showdown web server."""
@@ -55,39 +55,56 @@ def list_tournaments():
 @app.command()
 def create(
     title: str = typer.Option(..., "--title", "-t", help="Tournament title"),
-    task_type: TaskType = typer.Option(TaskType.TEXT, "--type", help="Task type (text, markdown, code, image, json)"),
-    file: Path = typer.Option(..., "--file", "-f", help="JSON file containing list of candidates"),
+    task_type: TaskType = typer.Option(TaskType.TEXT, "--type", help="Task type (text, markdown, code, diff, image, json)"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="JSON file containing list of candidates"),
+    item: Optional[List[str]] = typer.Option(None, "--item", "-i", help="Candidate item content (can be specified multiple times)"),
     prompt: Optional[str] = typer.Option(None, "--prompt", help="Evaluation prompt or task instructions"),
     tournament_id: Optional[str] = typer.Option(None, "--id", help="Custom tournament ID"),
+    port: int = typer.Option(8000, "--port", "-p", help="Server port for URL preview"),
 ):
-    """Create a new tournament from a JSON file of candidates."""
-    if not file.exists():
-        console.print(f"[red]Error: File not found: {file}[/red]")
-        raise typer.Exit(code=1)
+    """Create a new tournament from a JSON file or direct items."""
+    candidates = []
 
-    try:
-        raw_data = json.loads(file.read_text())
-        if isinstance(raw_data, dict) and "candidates" in raw_data:
-            raw_candidates = raw_data["candidates"]
-            if not prompt and "prompt" in raw_data:
-                prompt = raw_data["prompt"]
-        elif isinstance(raw_data, list):
-            raw_candidates = raw_data
-        else:
-            raise ValueError("Expected a JSON array of candidates or a dict with a 'candidates' key.")
-    except Exception as e:
-        console.print(f"[red]Error parsing candidate JSON: {e}[/red]")
-        raise typer.Exit(code=1)
+    if item:
+        candidates = [
+            Candidate(
+                id=f"item_{i+1}",
+                label=f"Candidate #{i+1}",
+                content=str(val),
+            )
+            for i, val in enumerate(item)
+        ]
+    elif file:
+        if not file.exists():
+            console.print(f"[red]Error: File not found: {file}[/red]")
+            raise typer.Exit(code=1)
 
-    candidates = [
-        Candidate(
-            id=str(c.get("id", f"cand_{i}")),
-            label=c.get("label", c.get("id")),
-            content=str(c.get("content", "")),
-            metadata=c.get("metadata", {}),
-        )
-        for i, c in enumerate(raw_candidates)
-    ]
+        try:
+            raw_data = json.loads(file.read_text())
+            if isinstance(raw_data, dict) and "candidates" in raw_data:
+                raw_candidates = raw_data["candidates"]
+                if not prompt and "prompt" in raw_data:
+                    prompt = raw_data["prompt"]
+            elif isinstance(raw_data, list):
+                raw_candidates = raw_data
+            else:
+                raise ValueError("Expected a JSON array of candidates or a dict with a 'candidates' key.")
+        except Exception as e:
+            console.print(f"[red]Error parsing candidate JSON: {e}[/red]")
+            raise typer.Exit(code=1)
+
+        candidates = [
+            Candidate(
+                id=str(c.get("id", f"cand_{i}")),
+                label=c.get("label", c.get("id")),
+                content=str(c.get("content", "")),
+                metadata=c.get("metadata", {}),
+            )
+            for i, c in enumerate(raw_candidates)
+        ]
+    else:
+        console.print("[red]Error: Must provide either --file or one or more --item options.[/red]")
+        raise typer.Exit(code=1)
 
     from showdown.server import create_tournament
 
@@ -102,16 +119,17 @@ def create(
 
     console.print(f"[bold green]Tournament created:[/bold green] [cyan]{t.id}[/cyan]")
     console.print(f"Candidates: [white]{len(t.candidates)}[/white]")
-    console.print(f"Start ranking at: [underline blue]http://localhost:8091/?t={t.id}[/underline blue]")
+    console.print(f"Start ranking at: [underline blue]http://localhost:{port}/?t={t.id}[/underline blue]")
 
 
 @app.command()
 def export(
     tournament_id: str = typer.Argument(..., help="Tournament ID"),
-    format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'leaderboard', or 'raw'"),
+    format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'kto', 'leaderboard', or 'raw'"),
+    jsonl: bool = typer.Option(False, "--jsonl", help="Export as JSON Lines format"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="File path to save the export"),
 ):
-    """Export tournament preferences for DPO training or leaderboard stats."""
+    """Export tournament preferences for DPO/KTO training or leaderboard stats."""
     storage = Storage()
     t = storage.load_tournament(tournament_id)
     if not t:
@@ -120,18 +138,21 @@ def export(
 
     from showdown.server import export_tournament
 
-    data = export_tournament(tournament_id=tournament_id, format=format)
-    formatted_json = json.dumps(data, indent=2)
+    data = export_tournament(tournament_id=tournament_id, format=format, jsonl=jsonl)
+    if jsonl and isinstance(data, list):
+        formatted_output = "\n".join(json.dumps(row) for row in data)
+    else:
+        formatted_output = json.dumps(data, indent=2)
 
     if output:
-        output.write_text(formatted_json)
+        output.write_text(formatted_output)
         console.print(f"[green]Exported {format} data to[/green] {output}")
     else:
-        console.print(formatted_json)
+        console.print(formatted_output)
 
 
 @app.command()
-def demo(port: int = typer.Option(8091, "--port", "-p", help="Port to serve")):
+def demo(port: int = typer.Option(8000, "--port", "-p", help="Port to serve")):
     """Initialize a demo tournament and launch the ranking server."""
     storage = Storage()
     demo_id = "demo_code_refactor"

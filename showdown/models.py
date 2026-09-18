@@ -10,8 +10,15 @@ class TaskType(str, Enum):
     TEXT = "text"
     MARKDOWN = "markdown"
     CODE = "code"
+    DIFF = "diff"
     IMAGE = "image"
     JSON = "json"
+
+
+class TournamentStatus(str, Enum):
+    ACTIVE = "active"
+    AWAITING_REVIEW = "awaiting_review"
+    COMPLETED = "completed"
 
 
 class Candidate(BaseModel):
@@ -65,6 +72,8 @@ class Tournament(BaseModel):
     stats: Dict[str, CandidateStats] = Field(default_factory=dict)
     triage: Dict[str, TriageRecord] = Field(default_factory=dict)
     matches: List[Match] = Field(default_factory=list)
+    status: TournamentStatus = TournamentStatus.ACTIVE
+    accepted_candidate_id: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
 
@@ -106,4 +115,9 @@ class EvolveResponse(BaseModel):
     prompt_used: str
     new_candidates: List[Candidate]
     summary: str
+
+
+class AcceptCandidateRequest(BaseModel):
+    candidate_id: str
+    notes: Optional[str] = None
 

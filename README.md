@@ -77,7 +77,7 @@ tournament = create_tournament(
     ]
 )
 
-print(f"Tournament ready for judging at: http://localhost:8091/?t={tournament.id}")
+print(f"Tournament ready for judging at: http://localhost:8000/?t={tournament.id}")
 ```
 
 ---
@@ -86,11 +86,15 @@ print(f"Tournament ready for judging at: http://localhost:8091/?t={tournament.id
 
 ### Start Server
 ```bash
-showdown serve --port 8091
+showdown serve --port 8000
 ```
 
 ### Create Tournament
 ```bash
+# Via direct items:
+showdown create --title "Tagline Selection" --item "CODE. SYSTEMS. AGENTS." --item "SYSTEMS. AGENTS. OPS."
+
+# Or via candidate JSON file:
 showdown create --title "Summarization Test" --type text --file candidates.json --prompt "Summarize the earnings report."
 ```
 
@@ -107,9 +111,13 @@ Candidate file format (`candidates.json`):
 showdown list
 ```
 
-### Export Preferences (for DPO)
+### Export Preferences (for DPO or KTO)
 ```bash
-showdown export <tournament-id> --format dpo --output dpo_dataset.json
+# DPO JSON or JSONL format
+showdown export <tournament-id> --format dpo --jsonl --output dpo_dataset.jsonl
+
+# KTO format (binary labels from triage)
+showdown export <tournament-id> --format kto --jsonl --output kto_dataset.jsonl
 ```
 
 ---

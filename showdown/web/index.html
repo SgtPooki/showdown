@@ -490,6 +490,7 @@
             <th>Record (W-L-T)</th>
             <th>Win Rate</th>
             <th>Matches</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody id="leaderboard-body"></tbody>
@@ -499,11 +500,12 @@
     <!-- Export View -->
     <div id="view-export" style="display: none; flex-direction: column; gap: 16px;">
       <div class="prompt-banner">
-        <div class="prompt-label">DPO / Preference Dataset Export</div>
-        <div class="prompt-text">Standardized JSONL format containing prompt, chosen, and rejected outputs for Direct Preference Optimization and model training.</div>
+        <div class="prompt-label">DPO & KTO Preference Dataset Export</div>
+        <div class="prompt-text">Standardized preference datasets containing prompt, chosen, and rejected/binary outputs for Direct Preference Optimization (DPO), Kahneman-Tversky Optimization (KTO), and model alignment.</div>
       </div>
-      <div style="display: flex; gap: 12px;">
-        <button class="vote-btn vote-btn-a" onclick="downloadExport('dpo')">Download DPO JSONL</button>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <button class="vote-btn vote-btn-a" onclick="downloadExport('dpo')">Download DPO JSON</button>
+        <button class="vote-btn vote-btn-a" onclick="downloadExport('kto')">Download KTO JSON</button>
         <button class="vote-btn vote-btn-secondary" onclick="downloadExport('leaderboard')">Download Leaderboard JSON</button>
       </div>
       <pre id="export-preview" class="candidate-code" style="max-height: 400px;"></pre>
@@ -632,6 +634,25 @@
         const pre = document.createElement('pre');
         pre.className = 'candidate-code';
         pre.textContent = cand.content;
+        body.appendChild(pre);
+      } else if (taskType === 'diff') {
+        const pre = document.createElement('pre');
+        pre.className = 'candidate-code';
+        cand.content.split('\n').forEach(line => {
+          const div = document.createElement('div');
+          if (line.startsWith('+') && !line.startsWith('+++')) {
+            div.style.color = '#4ade80';
+            div.style.background = 'rgba(74, 222, 128, 0.1)';
+          } else if (line.startsWith('-') && !line.startsWith('---')) {
+            div.style.color = '#f87171';
+            div.style.background = 'rgba(248, 113, 113, 0.1)';
+          } else if (line.startsWith('@@')) {
+            div.style.color = '#38bdf8';
+            div.style.fontWeight = 'bold';
+          }
+          div.textContent = line;
+          pre.appendChild(div);
+        });
         body.appendChild(pre);
       } else {
         // Markdown or Prose
@@ -764,6 +785,11 @@
       items.sort((a, b) => b.stat.elo - a.stat.elo);
 
       items.forEach((item, idx) => {
+        const isWinner = currentTournament.accepted_candidate_id === item.candidate.id;
+        const actionHtml = isWinner
+          ? '<span style="color: var(--accent-success, #4ade80); font-weight: 700; font-size: 12px;">Accepted Winner</span>'
+          : `<button class="vote-btn vote-btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="acceptWinner('${item.candidate.id}')">Accept</button>`;
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td><strong>#${idx + 1}</strong></td>
@@ -772,9 +798,26 @@
           <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
           <td>${item.winRate}%</td>
           <td>${item.stat.matches}</td>
+          <td>${actionHtml}</td>
         `;
         tbody.appendChild(tr);
       });
+    }
+
+    async function acceptWinner(candidateId) {
+      if (!currentTournament) return;
+      try {
+        const res = await fetch(`/api/tournaments/${currentTournament.id}/accept`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate_id: candidateId })
+        });
+        if (res.ok) {
+          await updateLeaderboard();
+        }
+      } catch (err) {
+        console.error("Error accepting winner", err);
+      }
     }
 
     function switchView(viewName) {
@@ -803,6 +846,16 @@
 
     function setupKeyboardShortcuts() {
       window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          const modal = document.getElementById('evolve-modal');
+          if (modal && modal.style.display === 'flex') {
+            triggerEvolution();
+          } else {
+            openEvolveModal();
+          }
+          return;
+        }
+
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
         if (document.getElementById('view-matchup').style.display === 'none') return;
 

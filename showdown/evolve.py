@@ -57,16 +57,8 @@ def extract_tournament_preferences(tournament: Tournament) -> Dict[str, Any]:
         is_starred = t_rec and t_rec.status in (TriageStatus.FAVORITE, TriageStatus.LIKED)
         is_rejected = t_rec and t_rec.status == TriageStatus.DISLIKED
 
-        if is_starred or (s.matches > 0 and s.elo >= 1200):
-            top_performers.append({
-                "id": c.id,
-                "label": c.label or c.id,
-                "content": c.content,
-                "elo": round(s.elo, 1),
-                "record": f"{s.wins}W-{s.losses}L-{s.ties}T",
-                "notes": t_rec.notes if t_rec else None,
-            })
-        elif is_rejected or (s.matches > 0 and s.elo < 1200):
+        # Explicitly rejected candidates must never enter top_performers regardless of Elo
+        if is_rejected:
             bottom_performers.append({
                 "id": c.id,
                 "label": c.label or c.id,
@@ -75,11 +67,33 @@ def extract_tournament_preferences(tournament: Tournament) -> Dict[str, Any]:
                 "record": f"{s.wins}W-{s.losses}L-{s.ties}T",
                 "notes": t_rec.notes if t_rec else None,
             })
-
-    # If no matches have been played yet, treat top half as baseline
-    if not top_performers and not bottom_performers and sorted_cands:
-        mid = max(1, len(sorted_cands) // 2)
-        top_performers = [{"id": c.id, "label": c.label or c.id, "content": c.content, "elo": 1200.0, "record": "0W-0L-0T", "notes": None} for c in sorted_cands[:mid]]
+        elif is_starred:
+            top_performers.append({
+                "id": c.id,
+                "label": c.label or c.id,
+                "content": c.content,
+                "elo": round(s.elo, 1),
+                "record": f"{s.wins}W-{s.losses}L-{s.ties}T",
+                "notes": t_rec.notes if t_rec else None,
+            })
+        elif s.matches > 0 and s.elo > 1200:
+            top_performers.append({
+                "id": c.id,
+                "label": c.label or c.id,
+                "content": c.content,
+                "elo": round(s.elo, 1),
+                "record": f"{s.wins}W-{s.losses}L-{s.ties}T",
+                "notes": t_rec.notes if t_rec else None,
+            })
+        elif s.matches > 0 and s.elo < 1200:
+            bottom_performers.append({
+                "id": c.id,
+                "label": c.label or c.id,
+                "content": c.content,
+                "elo": round(s.elo, 1),
+                "record": f"{s.wins}W-{s.losses}L-{s.ties}T",
+                "notes": t_rec.notes if t_rec else None,
+            })
 
     return {
         "top_performers": top_performers[:5],
@@ -109,7 +123,7 @@ def build_evolution_prompt(
             note_str = f" [Note: {p['notes']}]" if p["notes"] else ""
             prompt_lines.append(f"- {p['label']} (Elo {p['elo']}): {p['content']}{note_str}")
     else:
-        prompt_lines.append("- (No clear winners yet)")
+        prompt_lines.append("- (No clear winners yet; explore diverse directions aligned with the goal)")
 
     prompt_lines.append("\n### Low-Performing / Rejected (The user disliked or eliminated these):")
     if prefs["bottom_performers"]:
@@ -130,7 +144,7 @@ def build_evolution_prompt(
     prompt_lines.append(f"""
 ### Generation Instructions:
 Generate exactly {count} NEW distinct candidate variations that:
-1. Emphasize and refine the patterns seen in the high-performing winners.
+1. If high-performing winners exist, emphasize and refine their patterns. Otherwise, explore diverse creative variations.
 2. Strictly avoid patterns, words, or styles seen in the low-performing / rejected candidates.
 3. Explicitly honor the user's critiques, notes, and dislikes.
 4. Keep the outputs punchy, relevant, and high caliber.
@@ -196,14 +210,14 @@ def execute_evolution(
     next_gen = (max(existing_gens) + 1) if existing_gens else 2
 
     # Choose backend
-    resolved_backend = backend or "auto"
+    resolved_backend = backend or os.environ.get("SHOWDOWN_BACKEND") or "auto"
     if resolved_backend == "auto":
-        if os.environ.get("OPENAI_API_KEY"):
-            resolved_backend = "openai"
-        elif shutil.which("claude"):
+        if shutil.which("claude"):
             resolved_backend = "claude"
         elif shutil.which("codex"):
             resolved_backend = "codex"
+        elif os.environ.get("OPENAI_API_KEY"):
+            resolved_backend = "openai"
         else:
             resolved_backend = "cli_fallback"
 
