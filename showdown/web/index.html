@@ -464,7 +464,7 @@
           Tie / Equal <span class="kbd-shortcut">T</span>
         </button>
         <button class="vote-btn vote-btn-secondary" onclick="submitVote('both_bad')">
-          Both Bad <span class="kbd-shortcut">B</span>
+          Both Bad <span class="kbd-shortcut">3</span>
         </button>
         <button class="vote-btn vote-btn-b" onclick="submitVote('b')">
           Vote Candidate B <span class="kbd-shortcut">2</span>
@@ -678,9 +678,12 @@
             notes: notes || null
           })
         });
-        if (notesInput) notesInput.value = '';
-        loadNextMatchup();
-        updateLeaderboard();
+        if (notesInput) {
+          notesInput.value = '';
+          notesInput.blur();
+        }
+        await loadNextMatchup();
+        await updateLeaderboard();
       } catch (err) {
         console.error("Error submitting vote", err);
       }
@@ -863,15 +866,35 @@
           submitVote('a');
         } else if (e.key === '2' || e.key === 'ArrowRight') {
           submitVote('b');
+        } else if (e.key === '3' || e.key === 'b' || e.key === 'B') {
+          submitVote('both_bad');
         } else if (e.key === 't' || e.key === 'T' || e.code === 'Space') {
           e.preventDefault();
           submitVote('tie');
-        } else if (e.key === 'b' || e.key === 'B') {
-          submitVote('both_bad');
         } else if (e.key === 's' || e.key === 'S') {
           loadNextMatchup();
+        } else if (e.key === 'f') {
+          triageCurrent('a', 'favorite');
+        } else if (e.key === 'F') {
+          triageCurrent('b', 'favorite');
+        } else if (e.key === 'd') {
+          triageCurrent('a', 'disliked');
+        } else if (e.key === 'D') {
+          triageCurrent('b', 'disliked');
+        } else if (e.key === 'e' || e.key === 'E') {
+          openEvolveModal();
         }
       });
+
+      const notesInput = document.getElementById('matchup-notes');
+      if (notesInput) {
+        notesInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === 'Escape') {
+            e.preventDefault();
+            notesInput.blur();
+          }
+        });
+      }
     }
 
     init();
