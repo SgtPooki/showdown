@@ -38,6 +38,7 @@ ENV/
 # Showdown local state & datasets
 .showdown/
 data/
+artifacts/
 *.db
 *.sqlite3
 
