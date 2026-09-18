@@ -164,6 +164,9 @@ def _parse_candidates_json(raw_text: str, next_gen: int, backend_name: str) -> L
     """Parse JSON candidate list from model output, handling potential markdown wrappers."""
     # Attempt to locate JSON array in response
     text = raw_text.strip()
+    # Strip CLI preambles (e.g. omp 'Working...')
+    if "Working..." in text:
+        text = text.split("Working...", 1)[-1].strip()
     # Strip markdown block wrappers if present
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n", "", text)
@@ -212,8 +215,12 @@ def execute_evolution(
     # Choose backend
     resolved_backend = backend or os.environ.get("SHOWDOWN_BACKEND") or "auto"
     if resolved_backend == "auto":
-        if shutil.which("claude"):
+        if os.environ.get("SHOWDOWN_PREFER_HOMELAB") and shutil.which("omp"):
+            resolved_backend = "omp"
+        elif shutil.which("claude"):
             resolved_backend = "claude"
+        elif shutil.which("omp"):
+            resolved_backend = "omp"
         elif shutil.which("codex"):
             resolved_backend = "codex"
         elif os.environ.get("OPENAI_API_KEY"):
@@ -232,6 +239,18 @@ def execute_evolution(
         )
         if res.returncode != 0:
             raise RuntimeError(f"Claude CLI failed: {res.stderr.strip()}")
+        raw_output = res.stdout.strip()
+
+    elif resolved_backend in ("omp", "homelab", "homelab-default") and shutil.which("omp"):
+        model_name = os.environ.get("SHOWDOWN_HOMELAB_MODEL", "homelab-default")
+        res = subprocess.run(
+            ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", full_prompt],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"OMP Homelab CLI failed: {res.stderr.strip()}")
         raw_output = res.stdout.strip()
 
     elif resolved_backend == "codex" and shutil.which("codex"):
