@@ -44,11 +44,74 @@ def test_matchmaker_and_storage(tmp_path):
     pair = select_matchup(loaded)
     assert pair is not None
     assert pair[0].id != pair[1].id
-    print("All core unit tests passed!")
 
 
-if __name__ == "__main__":
-    import tempfile
-    with tempfile.TemporaryDirectory() as td:
-        test_elo_math()
-        test_matchmaker_and_storage(Path(td))
+def test_dynamic_k_factor():
+    from showdown.engine import get_dynamic_k_factor
+    assert get_dynamic_k_factor(1, 2) == 48.0
+    assert get_dynamic_k_factor(6, 8) == 32.0
+    assert get_dynamic_k_factor(20, 25) == 24.0
+
+
+def test_accept_and_wait_endpoints(tmp_path):
+    from showdown.client import create_tournament, accept_candidate, wait_for_tournament
+    from showdown.models import TournamentStatus
+
+    t = create_tournament(
+        title="Session Test",
+        items=[
+            {"id": "a", "label": "Option A", "content": "print('A')"},
+            {"id": "b", "label": "Option B", "content": "print('B')"},
+        ],
+        task_type="diff",
+        tournament_id="session_tourney",
+        data_dir=str(tmp_path),
+    )
+    assert t.task_type.value == "diff"
+
+    # Accept winner
+    res = accept_candidate("session_tourney", candidate_id="a", data_dir=str(tmp_path))
+    assert res["status"] == "completed"
+    assert res["accepted_candidate_id"] == "a"
+
+    # Wait endpoint should resolve completed immediately
+    wait_res = wait_for_tournament("session_tourney", timeout=2, data_dir=str(tmp_path))
+    assert wait_res["completed"] is True
+    assert wait_res["accepted_candidate"]["id"] == "a"
+
+
+def test_kto_and_jsonl_export(tmp_path):
+    import json
+    from showdown.server import export_tournament, storage
+    from showdown.models import Candidate, CandidateStats, TriageRecord, TriageStatus, Tournament, TaskType
+
+    orig_dir = storage.data_dir
+    storage.data_dir = tmp_path
+    try:
+        t = Tournament(
+            id="export_tourney",
+            title="Export Tourney",
+            task_type=TaskType.TEXT,
+            candidates=[
+                Candidate(id="c1", label="Winner", content="Great copy"),
+                Candidate(id="c2", label="Loser", content="Bad copy"),
+            ],
+            stats={"c1": CandidateStats(), "c2": CandidateStats()},
+            triage={
+                "c1": TriageRecord(status=TriageStatus.LIKED),
+                "c2": TriageRecord(status=TriageStatus.DISLIKED),
+            },
+        )
+        storage.save_tournament(t)
+
+        kto_data = export_tournament("export_tourney", format="kto")
+        assert len(kto_data) == 2
+        assert any(row["label"] is True and row["candidate_id"] == "c1" for row in kto_data)
+        assert any(row["label"] is False and row["candidate_id"] == "c2" for row in kto_data)
+
+        # JSONL export returns Response or formatted string
+        resp = export_tournament("export_tourney", format="kto", jsonl=True)
+        lines = [json.loads(line) for line in resp.body.decode().strip().split("\n")]
+        assert len(lines) == 2
+    finally:
+        storage.data_dir = orig_dir

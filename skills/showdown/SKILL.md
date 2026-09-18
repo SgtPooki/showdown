@@ -34,9 +34,9 @@ uv run showdown create \
 uv run showdown serve --port 8000
 ```
 
-### 4. Create a Tournament from Python SDK
+### 4. Create a Tournament & Wait for Winner (Python SDK)
 ```python
-from showdown.client import create_tournament
+from showdown.client import create_tournament, wait_for_tournament
 from showdown.models import TaskType
 
 t = create_tournament(
@@ -49,11 +49,21 @@ t = create_tournament(
     ]
 )
 print(f"Created tournament: {t.id}")
+
+# Autonomous agent blocks until the human accepts a winning candidate:
+res = wait_for_tournament(t.id, timeout=120)
+if res["completed"]:
+    winner = res["accepted_candidate"]
+    print(f"Winning output selected: {winner['label']}")
 ```
 
-### 5. Export Ranked Dataset (DPO / JSONL)
+### 5. Export Ranked Dataset (DPO / KTO / JSONL)
 ```bash
-uv run showdown export <tournament_id> --format dpo --output ./dpo_pairs.json
+# DPO pairs JSONL
+uv run showdown export <tournament_id> --format dpo --jsonl --output ./dpo_pairs.jsonl
+
+# KTO binary preference JSONL
+uv run showdown export <tournament_id> --format kto --jsonl --output ./kto_pairs.jsonl
 ```
 
 ## Preference Evolution Loop

@@ -74,3 +74,37 @@ def test_parse_candidates_json():
     assert cands[0].label == "CODE. ARCHITECTURE. AGENTS."
     assert cands[0].generation == 2
     assert cands[0].metadata["backend"] == "mock"
+
+
+def test_rejected_candidate_with_high_elo_never_in_top():
+    """A candidate explicitly disliked by the user must NEVER be placed in top_performers, even with Elo >= 1200."""
+    c = Candidate(id="lucky_disliked", label="Disliked Luck", content="Bad tone")
+    t = Tournament(
+        id="t_dislike",
+        title="Dislike test",
+        task_type=TaskType.TEXT,
+        candidates=[c],
+        stats={"lucky_disliked": CandidateStats(elo=1350.0, wins=4, losses=0, matches=4)},
+        triage={"lucky_disliked": TriageRecord(status=TriageStatus.DISLIKED, notes="Hate this style")},
+    )
+    prefs = extract_tournament_preferences(t)
+    assert len(prefs["top_performers"]) == 0
+    assert len(prefs["bottom_performers"]) == 1
+    assert prefs["bottom_performers"][0]["id"] == "lucky_disliked"
+
+
+def test_cold_start_empty_preferences():
+    """When no matches or triage records exist, candidate order must not arbitrarily designate winners."""
+    cands = [Candidate(id=f"c{i}", content=f"Candidate {i}") for i in range(6)]
+    t = Tournament(
+        id="t_cold",
+        title="Cold Start",
+        task_type=TaskType.TEXT,
+        candidates=cands,
+        stats={c.id: CandidateStats() for c in cands},
+    )
+    prefs = extract_tournament_preferences(t)
+    assert len(prefs["top_performers"]) == 0
+    assert len(prefs["bottom_performers"]) == 0
+    prompt, _ = build_evolution_prompt(t, count=3)
+    assert "No clear winners yet" in prompt
