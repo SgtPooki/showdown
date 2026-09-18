@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Showdown - Output Ranking Arena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --bg-canvas: #0C0D0F;
+      --bg-surface: #14161A;
+      --bg-surface-subtle: #1A1D24;
+      --bg-elevated: #20242C;
+      --border-subtle: #1E222A;
+      --border-default: #262A32;
+      --border-emphasis: #3B4250;
+      --text-primary: #F1F5F9;
+      --text-secondary: #94A3B8;
+      --text-tertiary: #64748B;
+      --brand-accent: #93C5FD;
+      --brand-accent-hover: #BFDBFE;
+      --btn-primary-bg: #2563EB;
+      --btn-primary-hover: #1D4ED8;
+      --status-success: #10B981;
+      --status-error: #EF4444;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    header {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-default);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    .brand-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      background: rgba(37, 99, 235, 0.15);
+      border: 1px solid rgba(147, 197, 253, 0.25);
+      color: var(--brand-accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-canvas);
+      padding: 4px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .nav-tab {
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: transparent;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .nav-tab.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-emphasis);
+    }
+
+    .tournament-selector {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      max-width: 240px;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      max-width: 1500px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px 24px;
+      gap: 20px;
+    }
+
+    /* Prompt Banner */
+    .prompt-banner {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .prompt-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--brand-accent);
+    }
+
+    .prompt-text {
+      font-size: 15px;
+      color: var(--text-primary);
+      line-height: 1.4;
+    }
+
+    /* Arena Matchup Area */
+    .arena-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+    }
+
+    .matchup-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      flex: 1;
+      min-height: 480px;
+    }
+
+    @media (max-width: 860px) {
+      .matchup-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .candidate-card {
+      background: var(--bg-surface);
+      border: 2px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .candidate-card:hover {
+      border-color: var(--border-emphasis);
+    }
+
+    .candidate-header {
+      padding: 12px 18px;
+      background: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .candidate-tag {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .candidate-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .candidate-body {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      font-size: 14px;
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      max-height: 600px;
+    }
+
+    .candidate-image {
+      max-width: 100%;
+      max-height: 480px;
+      object-fit: contain;
+      margin: auto;
+      border-radius: var(--radius-md);
+    }
+
+    .candidate-code {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg-canvas);
+      padding: 16px;
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      font-size: 13px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    /* Decision Bar */
+    .decision-bar {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .vote-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: 1px solid transparent;
+    }
+
+    .vote-btn-a {
+      background: var(--btn-primary-bg);
+      color: white;
+    }
+    .vote-btn-a:hover { background: var(--btn-primary-hover); transform: translateY(-1px); }
+
+    .vote-btn-b {
+      background: var(--btn-primary-bg);
+      color: white;
+    }
+    .vote-btn-b:hover { background: var(--btn-primary-hover); transform: translateY(-1px); }
+
+    .vote-btn-secondary {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+    }
+    .vote-btn-secondary:hover {
+      background: var(--bg-surface-subtle);
+      border-color: var(--border-emphasis);
+    }
+
+    .kbd-shortcut {
+      background: rgba(0, 0, 0, 0.35);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+    }
+
+    /* Leaderboard */
+    .leaderboard-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .leaderboard-table th, .leaderboard-table td {
+      padding: 14px 18px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 14px;
+    }
+
+    .leaderboard-table th {
+      background: var(--bg-surface-subtle);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+
+    .elo-pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      color: var(--brand-accent);
+      background: rgba(37, 99, 235, 0.12);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 13px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 15px;
+      background: var(--bg-surface);
+      border-radius: var(--radius-lg);
+      border: 1px dashed var(--border-default);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <a href="#" class="brand-title">
+      <svg width="24" height="24" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 0 C2.126 -0.004 4.252 -0.009 6.379 -0.016 C12.1 -0.029 17.821 -0.024 23.542 -0.015 C29.566 -0.007 35.59 -0.014 41.614 -0.019 C51.729 -0.024 61.843 -0.017 71.958 -0.003 C83.6 0.013 95.242 0.008 106.885 -0.008 C116.931 -0.022 126.978 -0.024 137.024 -0.016 C143.002 -0.011 148.98 -0.011 154.958 -0.021 C160.585 -0.029 166.212 -0.023 171.838 -0.006 C173.886 -0.002 175.933 -0.003 177.98 -0.01 C194.983 -0.06 212.346 0.844 228.624 6.201 C229.443 6.46 230.263 6.719 231.107 6.987 C249.547 12.961 265.238 22.185 280.186 34.388 C280.958 35.017 281.731 35.646 282.526 36.294 C287.239 40.274 291.287 44.616 295.186 49.388 C295.567 49.845 295.567 49.845 297.495 52.154 C319.389 79.342 330.018 113.754 326.671 148.555 C322.694 184.965 305.628 217.529 277.659 241.404 C248.951 264.442 216.209 274.678 179.514 274.486 C178.466 274.484 177.418 274.483 176.337 274.482 C173.037 274.476 169.737 274.463 166.436 274.451 C164.178 274.446 161.921 274.441 159.663 274.437 C154.171 274.426 148.678 274.409 143.186 274.388 C143.202 275.096 143.218 275.804 143.234 276.533 C143.684 300.028 141.579 321.036 134.186 343.388 C134.003 343.957 134.003 343.957 133.073 346.833 C130.098 354.6 124.748 358.565 118.186 363.388 C117.326 364.244 116.467 365.1 115.581 365.982 C111.661 369.241 107.985 369.061 103.06 368.956 C102.162 368.957 101.263 368.957 100.338 368.958 C97.383 368.955 94.43 368.916 91.475 368.876 C89.421 368.867 87.367 368.86 85.313 368.855 C79.917 368.836 74.522 368.787 69.127 368.732 C63.617 368.68 58.107 368.658 52.596 368.632 C41.793 368.579 30.99 368.493 20.186 368.388 C23.572 365.659 27.005 363.077 30.561 360.576 C50.551 346.018 61.846 323.135 65.756 299.098 C66.641 291.469 66.497 283.796 66.505 276.125 C66.514 274.203 66.525 272.28 66.536 270.357 C66.563 265.17 66.578 259.982 66.591 254.795 C66.607 249.362 66.633 243.929 66.659 238.496 C66.706 228.222 66.743 217.948 66.776 207.674 C66.814 195.972 66.863 184.269 66.914 172.567 C67.017 148.507 67.105 124.448 67.186 100.388 C92.266 100.388 117.346 100.388 143.186 100.388 C143.186 133.058 143.186 165.728 143.186 199.388 C147.177 199.337 147.177 199.337 167.374 199.076 C169.866 199.051 172.358 199.026 174.925 199 C196.743 198.694 214.283 195.735 230.186 179.388 C230.735 178.871 231.285 178.354 231.85 177.822 C242.352 167.068 246.951 151.117 247.272 136.47 C246.661 120.684 240.75 106.317 229.866 94.81 C212.446 79.066 192.591 77.078 170.104 77.129 C168.092 77.127 166.081 77.123 164.069 77.119 C158.635 77.11 153.201 77.113 147.767 77.12 C142.063 77.125 136.36 77.12 130.656 77.117 C121.08 77.113 111.504 77.118 101.927 77.127 C90.878 77.138 79.829 77.135 68.779 77.124 C59.269 77.115 49.758 77.113 40.248 77.119 C34.578 77.122 28.908 77.122 23.239 77.116 C17.907 77.11 12.575 77.114 7.243 77.125 C5.293 77.128 3.344 77.127 1.395 77.123 C-16.491 77.086 -32.599 77.717 -46.376 90.576 C-53.226 97.729 -56.306 105.495 -56.814 115.388 C-56.234 126.001 -52.035 135.038 -44.29 142.275 C-39.559 146.312 -34.65 150.109 -29.725 153.904 C-25.829 156.929 -21.992 160.027 -18.146 163.115 C-15.463 165.269 -12.777 167.417 -10.068 169.537 C14.183 188.549 31.24 211.807 36.776 242.677 C40.016 271.992 32.653 299.328 14.186 322.388 C-4.236 344.852 -29.997 358.587 -58.814 362.388 C-61.442 362.619 -64.051 362.82 -66.684 362.965 C-67.049 362.986 -67.049 362.986 -68.898 363.09 C-77.294 363.521 -85.679 363.478 -94.083 363.41 C-95.84 363.4 -97.596 363.39 -99.352 363.381 C-104.062 363.355 -108.771 363.322 -113.481 363.288 C-118.424 363.253 -123.368 363.225 -128.311 363.196 C-137.646 363.14 -146.981 363.078 -156.316 363.015 C-166.955 362.943 -177.593 362.877 -188.232 362.812 C-210.093 362.678 -231.953 362.535 -253.814 362.388 C-249.802 354.088 -242.899 347.266 -236.95 340.275 C-234.052 336.865 -231.197 333.425 -228.376 329.951 C-225.936 326.948 -223.47 323.975 -220.939 321.048 C-220.431 320.462 -219.924 319.875 -219.401 319.271 C-218.438 318.161 -217.472 317.053 -216.501 315.949 C-216.039 315.416 -215.576 314.883 -215.099 314.333 C-214.6 313.787 -214.101 313.24 -213.587 312.676 C-211.814 310.388 -211.814 310.388 -210.271 307.209 C-207.471 302.203 -204.947 298.279 -199.206 296.647 C-190.973 295.452 -182.645 295.803 -174.353 295.97 C-171.638 295.985 -168.924 295.979 -166.209 295.973 C-159.802 295.971 -153.397 296.033 -146.99 296.12 C-137.616 296.244 -128.242 296.27 -118.867 296.297 C-117.475 296.302 -116.082 296.306 -114.69 296.31 C-114.35 296.311 -114.35 296.311 -112.627 296.317 C-107.974 296.333 -103.323 296.378 -98.67 296.434 C-98.048 296.439 -98.048 296.439 -94.9 296.468 C-92.601 296.489 -90.301 296.518 -88.001 296.556 C-75.281 296.65 -62.59 295.17 -52.646 286.498 C-44.72 277.912 -42.421 269.48 -42.54 257.998 C-43.499 245.344 -51.931 237.761 -60.958 229.798 C-66.448 225.165 -72.131 220.781 -77.814 216.388 C-87.383 208.984 -96.75 201.407 -105.814 193.388 C-106.501 192.787 -107.188 192.187 -107.896 191.568 C-126.517 174.212 -136.493 147.754 -138.032 122.849 C-138.861 90.622 -126.28 61.186 -104.365 37.908 C-89.125 22.855 -69.382 11.333 -48.751 5.513 C-48.117 5.334 -47.483 5.155 -46.83 4.971 C-31.248 0.955 -16.018 -0.052 0 0 Z" fill="#93C5FD" transform="translate(477.814, 296.612)"/>
+      </svg>
+      Showdown
+      <span class="brand-badge">Arena</span>
+    </a>
+
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchView('matchup')">Arena Matchup</button>
+      <button class="nav-tab" onclick="switchView('leaderboard')">Leaderboard</button>
+      <button class="nav-tab" onclick="switchView('export')">Export DPO</button>
+    </div>
+
+    <div>
+      <select id="tournament-select" class="tournament-selector" onchange="onTournamentChange(this.value)">
+        <option value="">Select tournament...</option>
+      </select>
+    </div>
+  </header>
+
+  <main>
+    <!-- Prompt Banner -->
+    <div class="prompt-banner" id="prompt-banner">
+      <div class="prompt-label">Evaluation Prompt / Task</div>
+      <div class="prompt-text" id="prompt-text">Loading evaluation task...</div>
+    </div>
+
+    <!-- Matchup View -->
+    <div id="view-matchup" class="arena-container">
+      <div class="matchup-grid">
+        <!-- Candidate A -->
+        <div class="candidate-card" id="card-a">
+          <div class="candidate-header">
+            <div class="candidate-tag">
+              <span>Candidate A</span>
+              <span class="kbd-shortcut">[1]</span>
+            </div>
+            <div class="candidate-meta" id="meta-a"></div>
+          </div>
+          <div class="candidate-body" id="body-a"></div>
+        </div>
+
+        <!-- Candidate B -->
+        <div class="candidate-card" id="card-b">
+          <div class="candidate-header">
+            <div class="candidate-tag">
+              <span>Candidate B</span>
+              <span class="kbd-shortcut">[2]</span>
+            </div>
+            <div class="candidate-meta" id="meta-b"></div>
+          </div>
+          <div class="candidate-body" id="body-b"></div>
+        </div>
+      </div>
+
+      <!-- Decision Controls -->
+      <div class="decision-bar">
+        <button class="vote-btn vote-btn-a" onclick="submitVote('a')">
+          Vote Candidate A <span class="kbd-shortcut">1</span>
+        </button>
+        <button class="vote-btn vote-btn-secondary" onclick="submitVote('tie')">
+          Tie / Equal <span class="kbd-shortcut">T</span>
+        </button>
+        <button class="vote-btn vote-btn-secondary" onclick="submitVote('both_bad')">
+          Both Bad <span class="kbd-shortcut">B</span>
+        </button>
+        <button class="vote-btn vote-btn-b" onclick="submitVote('b')">
+          Vote Candidate B <span class="kbd-shortcut">2</span>
+        </button>
+        <button class="vote-btn vote-btn-secondary" onclick="loadNextMatchup()">
+          Skip Matchup <span class="kbd-shortcut">S</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Leaderboard View -->
+    <div id="view-leaderboard" style="display: none;">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Candidate</th>
+            <th>Elo Rating</th>
+            <th>Record (W-L-T)</th>
+            <th>Win Rate</th>
+            <th>Matches</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Export View -->
+    <div id="view-export" style="display: none; flex-direction: column; gap: 16px;">
+      <div class="prompt-banner">
+        <div class="prompt-label">DPO / Preference Dataset Export</div>
+        <div class="prompt-text">Standardized JSONL format containing prompt, chosen, and rejected outputs for Direct Preference Optimization and model training.</div>
+      </div>
+      <div style="display: flex; gap: 12px;">
+        <button class="vote-btn vote-btn-a" onclick="downloadExport('dpo')">Download DPO JSONL</button>
+        <button class="vote-btn vote-btn-secondary" onclick="downloadExport('leaderboard')">Download Leaderboard JSON</button>
+      </div>
+      <pre id="export-preview" class="candidate-code" style="max-height: 400px;"></pre>
+    </div>
+  </main>
+
+  <script>
+    let currentTournament = null;
+    let currentMatchup = null;
+
+    async function init() {
+      await loadTournamentList();
+      setupKeyboardShortcuts();
+    }
+
+    async function loadTournamentList() {
+      try {
+        const res = await fetch('/api/tournaments');
+        const list = await res.json();
+        const sel = document.getElementById('tournament-select');
+        sel.innerHTML = '';
+        if (list.length === 0) {
+          sel.innerHTML = '<option value="">No tournaments found</option>';
+          document.getElementById('prompt-text').textContent = 'No tournaments found. Create one with the CLI or API.';
+          return;
+        }
+        list.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = `${t.title} (${t.candidates.length} items)`;
+          sel.appendChild(opt);
+        });
+        const urlParams = new URLSearchParams(window.location.search);
+        const requestedId = urlParams.get('t') || list[0].id;
+        sel.value = requestedId;
+        onTournamentChange(requestedId);
+      } catch (err) {
+        console.error("Failed to load tournaments", err);
+      }
+    }
+
+    async function onTournamentChange(id) {
+      if (!id) return;
+      try {
+        const res = await fetch(`/api/tournaments/${id}`);
+        currentTournament = await res.json();
+        document.getElementById('prompt-text').textContent = currentTournament.prompt || currentTournament.title;
+        loadNextMatchup();
+        updateLeaderboard();
+      } catch (err) {
+        console.error("Failed to load tournament", err);
+      }
+    }
+
+    async function loadNextMatchup() {
+      if (!currentTournament) return;
+      try {
+        const res = await fetch(`/api/tournaments/${currentTournament.id}/matchup`);
+        if (res.status === 404 || res.status === 204) {
+          document.getElementById('view-matchup').innerHTML = '<div class="empty-state">Need at least 2 candidates to generate a matchup.</div>';
+          return;
+        }
+        currentMatchup = await res.json();
+        renderCandidate('a', currentMatchup.candidate_a);
+        renderCandidate('b', currentMatchup.candidate_b);
+      } catch (err) {
+        console.error("Error loading matchup", err);
+      }
+    }
+
+    function renderCandidate(side, cand) {
+      const body = document.getElementById(`body-${side}`);
+      const meta = document.getElementById(`meta-${side}`);
+      meta.textContent = cand.label || cand.id;
+      body.innerHTML = '';
+
+      const taskType = currentTournament.task_type;
+      if (taskType === 'image') {
+        const img = document.createElement('img');
+        img.className = 'candidate-image';
+        img.src = cand.content;
+        body.appendChild(img);
+      } else if (taskType === 'code' || taskType === 'json') {
+        const pre = document.createElement('pre');
+        pre.className = 'candidate-code';
+        pre.textContent = cand.content;
+        body.appendChild(pre);
+      } else {
+        // Markdown or Prose
+        const div = document.createElement('div');
+        div.innerHTML = marked.parse(cand.content);
+        body.appendChild(div);
+      }
+    }
+
+    async function submitVote(winner) {
+      if (!currentMatchup || !currentTournament) return;
+      try {
+        await fetch(`/api/tournaments/${currentTournament.id}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id_a: currentMatchup.candidate_a.id,
+            id_b: currentMatchup.candidate_b.id,
+            winner: winner
+          })
+        });
+        loadNextMatchup();
+        updateLeaderboard();
+      } catch (err) {
+        console.error("Error submitting vote", err);
+      }
+    }
+
+    async function updateLeaderboard() {
+      if (!currentTournament) return;
+      const res = await fetch(`/api/tournaments/${currentTournament.id}`);
+      const t = await res.json();
+      currentTournament = t;
+
+      const tbody = document.getElementById('leaderboard-body');
+      tbody.innerHTML = '';
+
+      const items = t.candidates.map(c => {
+        const stat = t.stats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
+        const winRate = stat.matches > 0 ? Math.round((stat.wins / stat.matches) * 100) : 0;
+        return { candidate: c, stat, winRate };
+      });
+
+      items.sort((a, b) => b.stat.elo - a.stat.elo);
+
+      items.forEach((item, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>#${idx + 1}</strong></td>
+          <td>${item.candidate.label || item.candidate.id}</td>
+          <td><span class="elo-pill">${Math.round(item.stat.elo)}</span></td>
+          <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
+          <td>${item.winRate}%</td>
+          <td>${item.stat.matches}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function switchView(viewName) {
+      document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+      event.target.classList.add('active');
+
+      document.getElementById('view-matchup').style.display = viewName === 'matchup' ? 'flex' : 'none';
+      document.getElementById('view-leaderboard').style.display = viewName === 'leaderboard' ? 'block' : 'none';
+      document.getElementById('view-export').style.display = viewName === 'export' ? 'flex' : 'none';
+
+      if (viewName === 'leaderboard') updateLeaderboard();
+      if (viewName === 'export') loadExportPreview();
+    }
+
+    async function loadExportPreview() {
+      if (!currentTournament) return;
+      const res = await fetch(`/api/tournaments/${currentTournament.id}/export?format=dpo`);
+      const data = await res.json();
+      document.getElementById('export-preview').textContent = JSON.stringify(data.slice(0, 5), null, 2);
+    }
+
+    function downloadExport(format) {
+      if (!currentTournament) return;
+      window.location.href = `/api/tournaments/${currentTournament.id}/export?format=${format}&download=true`;
+    }
+
+    function setupKeyboardShortcuts() {
+      window.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        if (document.getElementById('view-matchup').style.display === 'none') return;
+
+        if (e.key === '1' || e.key === 'ArrowLeft') {
+          submitVote('a');
+        } else if (e.key === '2' || e.key === 'ArrowRight') {
+          submitVote('b');
+        } else if (e.key === 't' || e.key === 'T' || e.code === 'Space') {
+          e.preventDefault();
+          submitVote('tie');
+        } else if (e.key === 'b' || e.key === 'B') {
+          submitVote('both_bad');
+        } else if (e.key === 's' || e.key === 'S') {
+          loadNextMatchup();
+        }
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[project]
+name = "showdown"
+version = "0.1.0"
+description = "Minimalist Human-in-the-Loop & LLM Output Ranking Arena"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Russell", email = "russell@sgtpooki.com" }
+]
+keywords = ["llm", "eval", "ranking", "elo", "dpo", "human-in-the-loop", "arena"]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.0.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+showdown = "showdown.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["showdown"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
