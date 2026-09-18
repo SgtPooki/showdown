@@ -250,6 +250,39 @@
       border: 1px solid var(--border-subtle);
     }
 
+    .candidate-svg-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: radial-gradient(circle, var(--bg-surface-subtle) 0%, var(--bg-canvas) 100%);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      margin: auto 0;
+      width: 100%;
+      min-height: 280px;
+    }
+
+    .candidate-svg-container svg {
+      max-width: 100%;
+      max-height: 360px;
+      height: auto;
+      filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.25));
+    }
+
+    .svg-source-toggle {
+      margin-top: 14px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-tertiary);
+      background: none;
+      border: none;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+
     /* Decision Bar */
     .decision-bar {
       background: var(--bg-surface);
@@ -625,7 +658,36 @@
       }
 
       const taskType = currentTournament.task_type;
-      if (taskType === 'image') {
+      const isSvg = taskType === 'svg' || (cand.content.trim().startsWith('<svg') && cand.content.includes('</svg>'));
+      if (isSvg) {
+        const svgBox = document.createElement('div');
+        svgBox.className = 'candidate-svg-container';
+
+        const wrapper = document.createElement('div');
+        wrapper.style.display = 'contents';
+        wrapper.innerHTML = cand.content.trim();
+        svgBox.appendChild(wrapper);
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'svg-source-toggle';
+        toggleBtn.textContent = 'View SVG Markup';
+        const sourcePre = document.createElement('pre');
+        sourcePre.className = 'candidate-code';
+        sourcePre.style.display = 'none';
+        sourcePre.style.marginTop = '12px';
+        sourcePre.style.width = '100%';
+        sourcePre.textContent = cand.content.trim();
+
+        toggleBtn.onclick = () => {
+          const isHidden = sourcePre.style.display === 'none';
+          sourcePre.style.display = isHidden ? 'block' : 'none';
+          toggleBtn.textContent = isHidden ? 'Hide SVG Markup' : 'View SVG Markup';
+        };
+
+        svgBox.appendChild(toggleBtn);
+        svgBox.appendChild(sourcePre);
+        body.appendChild(svgBox);
+      } else if (taskType === 'image') {
         const img = document.createElement('img');
         img.className = 'candidate-image';
         img.src = cand.content;
@@ -793,10 +855,17 @@
           ? '<span style="color: var(--accent-success, #4ade80); font-weight: 700; font-size: 12px;">Accepted Winner</span>'
           : `<button class="vote-btn vote-btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="acceptWinner('${item.candidate.id}')">Accept</button>`;
 
+        let previewHtml = '';
+        if (t.task_type === 'svg' || (item.candidate.content.trim().startsWith('<svg') && item.candidate.content.includes('</svg>'))) {
+          previewHtml = `<span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:4px; padding:3px; margin-right:10px; vertical-align:middle; overflow:hidden;">${item.candidate.content}</span>`;
+        } else if (t.task_type === 'image') {
+          previewHtml = `<img src="${item.candidate.content}" style="width:32px; height:32px; object-fit:cover; border-radius:4px; margin-right:10px; vertical-align:middle;" />`;
+        }
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td><strong>#${idx + 1}</strong></td>
-          <td>${item.candidate.label || item.candidate.id}</td>
+          <td style="display:flex; align-items:center;">${previewHtml}<span>${item.candidate.label || item.candidate.id}</span></td>
           <td><span class="elo-pill">${Math.round(item.stat.elo)}</span></td>
           <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
           <td>${item.winRate}%</td>

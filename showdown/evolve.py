@@ -141,13 +141,19 @@ def build_evolution_prompt(
     if instructions and instructions.strip():
         prompt_lines.append(f"\n### Additional User Instructions:\n{instructions.strip()}")
 
+    type_specific_guidance = ""
+    if tournament.task_type == TaskType.SVG:
+        type_specific_guidance = "\n5. For each candidate, 'content' MUST be a clean, valid, standalone inline SVG string starting with '<svg' and ending with '</svg>', containing viewBox, width, height, and well-styled SVG elements."
+    elif tournament.task_type == TaskType.CODE:
+        type_specific_guidance = "\n5. For each candidate, 'content' MUST be clean, executable code without outer markdown quotes."
+
     prompt_lines.append(f"""
 ### Generation Instructions:
 Generate exactly {count} NEW distinct candidate variations that:
 1. If high-performing winners exist, emphasize and refine their patterns. Otherwise, explore diverse creative variations.
 2. Strictly avoid patterns, words, or styles seen in the low-performing / rejected candidates.
 3. Explicitly honor the user's critiques, notes, and dislikes.
-4. Keep the outputs punchy, relevant, and high caliber.
+4. Keep the outputs punchy, relevant, and high caliber.{type_specific_guidance}
 
 Output ONLY a JSON array of objects with 'label' and 'content' keys. Do not include markdown code block formatting or explanation. Example format:
 [

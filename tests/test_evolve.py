@@ -108,3 +108,21 @@ def test_cold_start_empty_preferences():
     assert len(prefs["bottom_performers"]) == 0
     prompt, _ = build_evolution_prompt(t, count=3)
     assert "No clear winners yet" in prompt
+
+
+def test_svg_evolution_prompt_contains_svg_guidance():
+    # Arrange
+    tournament = Tournament(
+        id="t_svg",
+        title="Logo Design",
+        task_type=TaskType.SVG,
+        candidates=[Candidate(id="svg1", content="<svg></svg>")],
+        stats={"svg1": CandidateStats()},
+    )
+
+    # Act
+    prompt, _ = build_evolution_prompt(tournament, count=2)
+
+    # Assert
+    assert "Task Type: svg" in prompt
+    assert "valid, standalone inline SVG string" in prompt

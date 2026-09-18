@@ -13,6 +13,7 @@ class TaskType(str, Enum):
     DIFF = "diff"
     IMAGE = "image"
     JSON = "json"
+    SVG = "svg"
 
 
 class TournamentStatus(str, Enum):
