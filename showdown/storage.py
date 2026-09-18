@@ -3,7 +3,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from showdown.models import Tournament, CandidateStats
 
 
@@ -12,6 +12,8 @@ def get_data_dir() -> Path:
     env_dir = os.environ.get("SHOWDOWN_DATA_DIR")
     if env_dir:
         p = Path(env_dir)
+    elif (Path.cwd() / ".showdown").is_dir():
+        p = Path.cwd() / ".showdown"
     else:
         p = Path.home() / ".showdown"
     p.mkdir(parents=True, exist_ok=True)
@@ -19,12 +21,19 @@ def get_data_dir() -> Path:
 
 
 class Storage:
-    def __init__(self, data_dir: Optional[Path] = None):
-        self.data_dir = data_dir or get_data_dir()
+    def __init__(self, data_dir: Optional[Union[Path, str]] = None):
+        if data_dir is not None:
+            self.data_dir = Path(data_dir)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.data_dir = get_data_dir()
 
     def _tournament_file(self, tournament_id: str) -> Path:
         clean_id = tournament_id.replace("/", "_").replace("\\", "_")
         return self.data_dir / f"{clean_id}.json"
+
+    def has_tournament(self, tournament_id: str) -> bool:
+        return self._tournament_file(tournament_id).exists()
 
     def save_tournament(self, tournament: Tournament) -> None:
         file_path = self._tournament_file(tournament.id)

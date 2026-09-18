@@ -171,5 +171,68 @@ def demo(port: int = typer.Option(8091, "--port", "-p", help="Port to serve")):
     uvicorn.run("showdown.server:app", host="127.0.0.1", port=port)
 
 
+@app.command()
+def install_skill(
+    target: str = typer.Option("auto", "--target", "-t", help="Target framework: 'auto', 'agents', 'claude', 'global-claude', 'global-agents'"),
+    dest: Optional[Path] = typer.Option(None, "--dest", "-d", help="Custom destination directory"),
+    symlink: bool = typer.Option(False, "--symlink", help="Symlink skill instead of copying"),
+):
+    """Install the Showdown agent skill into an agent workspace or config."""
+    import shutil
+
+    skill_src = Path(__file__).resolve().parent.parent / "skills" / "showdown"
+    if not skill_src.exists():
+        console.print(f"[red]Error: Skill source directory not found at {skill_src}[/red]")
+        raise typer.Exit(code=1)
+
+    targets = []
+    if dest:
+        targets.append(dest)
+    elif target == "agents":
+        targets.append(Path.cwd() / ".agents" / "skills" / "showdown")
+    elif target == "claude":
+        targets.append(Path.cwd() / ".claude" / "skills" / "showdown")
+    elif target == "global-claude":
+        targets.append(Path.home() / ".claude" / "skills" / "showdown")
+    elif target == "global-agents":
+        targets.append(Path.home() / ".agents" / "skills" / "showdown")
+    elif target == "auto":
+        found_any = False
+        curr = Path.cwd().resolve()
+        for parent in [curr] + list(curr.parents):
+            if (parent / ".agents" / "skills").is_dir():
+                targets.append(parent / ".agents" / "skills" / "showdown")
+                found_any = True
+            if (parent / ".claude" / "skills").is_dir():
+                targets.append(parent / ".claude" / "skills" / "showdown")
+                found_any = True
+            if found_any:
+                break
+        if not found_any:
+            targets.append(curr / ".agents" / "skills" / "showdown")
+
+    for target_dir in targets:
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        if target_dir.is_symlink() or target_dir.exists():
+            if target_dir.is_symlink() or target_dir.is_file():
+                target_dir.unlink()
+            elif target_dir.is_dir():
+                shutil.rmtree(target_dir)
+
+        if symlink:
+            try:
+                target_dir.symlink_to(skill_src.resolve(), target_is_directory=True)
+                console.print(f"[green]Symlinked skill to[/green] {target_dir} -> {skill_src.resolve()}")
+            except OSError:
+                shutil.copytree(skill_src, target_dir)
+                console.print(f"[green]Copied skill to[/green] {target_dir}")
+        else:
+            shutil.copytree(skill_src, target_dir)
+            console.print(f"[green]Copied skill to[/green] {target_dir}")
+
+    console.print("[bold cyan]Showdown skill ready for agent invocation via /showdown![/bold cyan]")
+
+
 if __name__ == "__main__":
     app()
+

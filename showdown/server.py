@@ -1,7 +1,9 @@
 """FastAPI server for Showdown output ranking arena."""
 
 import json
+import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -12,8 +14,11 @@ from fastapi.staticfiles import StaticFiles
 
 from showdown.engine import select_matchup, update_elo
 from showdown.models import (
+    AddCandidatesRequest,
     CandidateStats,
     CreateTournamentRequest,
+    EvolveRequest,
+    EvolveResponse,
     Match,
     TriageRecord,
     TriageRequest,
@@ -51,7 +56,22 @@ def list_tournaments():
 
 @app.post("/api/tournaments", response_model=Tournament)
 def create_tournament(req: CreateTournamentRequest):
-    t_id = req.id or f"tournament_{int(time.time())}"
+    if req.id:
+        t_id = req.id
+        if storage.has_tournament(t_id) and not req.overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Tournament with ID '{t_id}' already exists. Provide a unique ID or set overwrite=true."
+            )
+    else:
+        # Generate clean human-readable slug with collision protection
+        clean_title = re.sub(r'[^a-zA-Z0-9_]+', '_', req.title.lower().strip()).strip('_')[:32]
+        if not clean_title:
+            clean_title = "tournament"
+        t_id = f"{clean_title}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
+        while storage.has_tournament(t_id):
+            t_id = f"{clean_title}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
+
     now = time.time()
     tournament = Tournament(
         id=t_id,
@@ -181,11 +201,57 @@ def record_triage(tournament_id: str, req: TriageRequest):
     return {"status": "saved", "candidate_id": req.candidate_id}
 
 
+@app.post("/api/tournaments/{tournament_id}/candidates", response_model=Tournament)
+def add_candidates(tournament_id: str, req: AddCandidatesRequest):
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    existing_ids = {c.id for c in tournament.candidates}
+    for c in req.candidates:
+        if c.id in existing_ids:
+            continue
+        tournament.candidates.append(c)
+        tournament.stats[c.id] = CandidateStats()
+
+    tournament.updated_at = time.time()
+    storage.save_tournament(tournament)
+    return tournament
+
+
+@app.post("/api/tournaments/{tournament_id}/evolve", response_model=EvolveResponse)
+def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        from showdown.evolve import execute_evolution
+        evolve_res = execute_evolution(
+            tournament=tournament,
+            count=req.count,
+            instructions=req.instructions,
+            backend=req.backend,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Append the evolved candidates to the tournament
+    for c in evolve_res.new_candidates:
+        tournament.candidates.append(c)
+        tournament.stats[c.id] = CandidateStats()
+
+    tournament.updated_at = time.time()
+    storage.save_tournament(tournament)
+    return evolve_res
+
+
+
 @app.get("/api/tournaments/{tournament_id}/export")
 def export_tournament(
     tournament_id: str,
-    format: str = Query("dpo", pattern="^(dpo|leaderboard|matches|raw)$"),
-    download: bool = Query(False),
+    format: str = "dpo",
+    download: bool = False,
 ):
     tournament = storage.load_tournament(tournament_id)
     if not tournament:

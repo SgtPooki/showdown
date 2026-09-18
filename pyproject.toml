@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "Russell", email = "russell@sgtpooki.com" }
+    { name = "SgtPooki", email = "1173416+SgtPooki@users.noreply.github.com" }
 ]
 keywords = ["llm", "eval", "ranking", "elo", "dpo", "human-in-the-loop", "arena"]
 dependencies = [

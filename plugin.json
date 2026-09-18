@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "showdown",
+  "version": "0.1.0",
+  "description": "Minimalist Human-in-the-Loop & LLM Output Ranking Arena with preference convergence.",
+  "author": {
+    "name": "SgtPooki",
+    "email": "1173416+SgtPooki@users.noreply.github.com",
+    "url": "https://sgtpooki.com"
+  },
+  "homepage": "https://github.com/SgtPooki/showdown",
+  "repository": "https://github.com/SgtPooki/showdown",
+  "license": "MIT",
+  "keywords": [
+    "eval",
+    "ranking",
+    "elo",
+    "dpo",
+    "human-in-the-loop",
+    "arena",
+    "preferences",
+    "evolution"
+  ]
+}

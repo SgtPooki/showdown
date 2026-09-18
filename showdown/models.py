@@ -19,6 +19,7 @@ class Candidate(BaseModel):
     label: Optional[str] = None
     content: str  # text, markdown, code snippet, image URL / base64 / path, or JSON string
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    generation: int = 1
 
 
 class Match(BaseModel):
@@ -74,6 +75,7 @@ class CreateTournamentRequest(BaseModel):
     prompt: Optional[str] = None
     task_type: TaskType = TaskType.TEXT
     candidates: List[Candidate]
+    overwrite: bool = False
 
 
 class VoteRequest(BaseModel):
@@ -88,3 +90,20 @@ class TriageRequest(BaseModel):
     candidate_id: str
     status: TriageStatus
     notes: Optional[str] = None
+
+
+class AddCandidatesRequest(BaseModel):
+    candidates: List[Candidate]
+
+
+class EvolveRequest(BaseModel):
+    count: int = Field(default=5, ge=1, le=20)
+    instructions: Optional[str] = None
+    backend: Optional[str] = "auto"  # "auto", "claude", "codex", "openai"
+
+
+class EvolveResponse(BaseModel):
+    prompt_used: str
+    new_candidates: List[Candidate]
+    summary: str
+

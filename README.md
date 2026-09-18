@@ -35,13 +35,27 @@ Or with `pip`:
 pip install -e .
 ```
 
-### 2. Launch the Demo Tournament
+### 2. Install as Agent Plugin / Skill
 
+Showdown conforms to the **[Agent Plugins Specification 1.0.0](https://github.com/agentplugins/agent-plugins-spec)** (`plugin.json`) and the universal Agent Skills standard.
+
+**Via Universal Skills Manager (`skills.sh`):**
 ```bash
-showdown demo
+npx skills add SgtPooki/showdown
 ```
 
-Open [http://localhost:8091](http://localhost:8091) in your browser.
+**Via Showdown CLI (auto-detects Antigravity, Claude Code, and Cursor):**
+```bash
+uv run showdown install-skill
+```
+
+### 3. Launch the Demo Tournament
+
+```bash
+uv run showdown demo
+```
+
+Open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ---
 

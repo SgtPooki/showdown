@@ -13,6 +13,7 @@ def create_tournament(
     task_type: str = "text",
     tournament_id: Optional[str] = None,
     data_dir: Optional[str] = None,
+    overwrite: bool = False,
 ) -> Tournament:
     """
     Create a new Showdown tournament programmatically.
@@ -24,12 +25,12 @@ def create_tournament(
         task_type: 'text', 'markdown', 'code', 'image', or 'json'.
         tournament_id: Optional custom slug/id.
         data_dir: Optional custom data storage directory.
+        overwrite: If True, overwrite existing tournament with the same ID.
 
     Returns:
         The created Tournament instance.
     """
     storage = Storage(data_dir=data_dir)
-    t_id = tournament_id or f"tournament_{int(time.time())}"
 
     parsed_candidates = [
         Candidate(
@@ -42,13 +43,21 @@ def create_tournament(
     ]
 
     req = CreateTournamentRequest(
-        id=t_id,
+        id=tournament_id,
         title=title,
         prompt=prompt,
         task_type=TaskType(task_type.lower()),
         candidates=parsed_candidates,
+        overwrite=overwrite,
     )
 
     from showdown.server import create_tournament as server_create_tournament
-
-    return server_create_tournament(req)
+    # If custom data_dir is provided, ensure storage uses it
+    import showdown.server
+    original_storage = showdown.server.storage
+    try:
+        if data_dir:
+            showdown.server.storage = storage
+        return server_create_tournament(req)
+    finally:
+        showdown.server.storage = original_storage

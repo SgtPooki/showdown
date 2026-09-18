@@ -26,6 +26,15 @@ env/
 venv/
 ENV/
 
+# Environments & Secrets
+.env
+*.env
+.env.*
+
+# Tests & Cache
+.pytest_cache/
+.ruff_cache/
+
 # Showdown local state & datasets
 .showdown/
 data/

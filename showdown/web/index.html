@@ -354,6 +354,32 @@
       border-radius: var(--radius-lg);
       border: 1px dashed var(--border-default);
     }
+
+    /* Triage buttons */
+    .triage-btn {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-tertiary);
+      border-radius: var(--radius-sm);
+      padding: 2px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .triage-btn:hover {
+      border-color: var(--border-emphasis);
+      color: var(--text-primary);
+    }
+    .triage-btn.starred {
+      color: #FBBF24;
+      border-color: #F59E0B;
+      background: rgba(245, 158, 11, 0.15);
+    }
+    .triage-btn.disliked {
+      color: #EF4444;
+      border-color: #DC2626;
+      background: rgba(239, 68, 68, 0.15);
+    }
   </style>
 </head>
 <body>
@@ -371,6 +397,7 @@
       <button class="nav-tab active" onclick="switchView('matchup')">Arena Matchup</button>
       <button class="nav-tab" onclick="switchView('leaderboard')">Leaderboard</button>
       <button class="nav-tab" onclick="switchView('export')">Export DPO</button>
+      <button class="nav-tab" style="color: var(--brand-accent); font-weight: 600;" onclick="openEvolveModal()">✨ Evolve Pool</button>
     </div>
 
     <div>
@@ -397,7 +424,11 @@
               <span>Candidate A</span>
               <span class="kbd-shortcut">[1]</span>
             </div>
-            <div class="candidate-meta" id="meta-a"></div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div class="candidate-meta" id="meta-a"></div>
+              <button class="triage-btn" id="star-btn-a" title="Star / Favorite" onclick="triageCurrent('a', 'favorite')">★</button>
+              <button class="triage-btn" id="reject-btn-a" title="Reject / Dislike" onclick="triageCurrent('a', 'disliked')">✕</button>
+            </div>
           </div>
           <div class="candidate-body" id="body-a"></div>
         </div>
@@ -409,10 +440,19 @@
               <span>Candidate B</span>
               <span class="kbd-shortcut">[2]</span>
             </div>
-            <div class="candidate-meta" id="meta-b"></div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div class="candidate-meta" id="meta-b"></div>
+              <button class="triage-btn" id="star-btn-b" title="Star / Favorite" onclick="triageCurrent('b', 'favorite')">★</button>
+              <button class="triage-btn" id="reject-btn-b" title="Reject / Dislike" onclick="triageCurrent('b', 'disliked')">✕</button>
+            </div>
           </div>
           <div class="candidate-body" id="body-b"></div>
         </div>
+      </div>
+
+      <!-- Quick Feedback Notes Input -->
+      <div style="display: flex; gap: 10px; width: 100%;">
+        <input type="text" id="matchup-notes" placeholder="Optional critique note (e.g. 'dislike ops', 'prefer punchy 3 words', 'too corporate')..." style="flex: 1; padding: 10px 14px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-primary); font-size: 13px;" />
       </div>
 
       <!-- Decision Controls -->
@@ -437,6 +477,10 @@
 
     <!-- Leaderboard View -->
     <div id="view-leaderboard" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Candidate Leaderboard</h2>
+        <button class="vote-btn vote-btn-a" onclick="openEvolveModal()">✨ Evolve Next Generation</button>
+      </div>
       <table class="leaderboard-table">
         <thead>
           <tr>
@@ -463,6 +507,34 @@
         <button class="vote-btn vote-btn-secondary" onclick="downloadExport('leaderboard')">Download Leaderboard JSON</button>
       </div>
       <pre id="export-preview" class="candidate-code" style="max-height: 400px;"></pre>
+    </div>
+
+    <!-- Evolve Modal -->
+    <div id="evolve-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-emphasis); border-radius: var(--radius-lg); width: 100%; max-width: 580px; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Evolve Candidate Pool</h3>
+          <button onclick="closeEvolveModal()" style="background: none; border: none; color: var(--text-tertiary); font-size: 20px; cursor: pointer;">&times;</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+          Showdown synthesizes your winning Elo contenders, eliminated items, and feedback notes to generate mutated candidates aligned with your preferences.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">ADDITIONAL GUIDANCE (OPTIONAL)</label>
+          <textarea id="evolve-instructions" rows="3" placeholder="e.g. Focus on punchy 3-word combinations with strong action verbs..." style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">COUNT:</label>
+            <input type="number" id="evolve-count" value="5" min="1" max="15" style="width: 60px; padding: 6px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button class="vote-btn vote-btn-secondary" onclick="closeEvolveModal()">Cancel</button>
+            <button class="vote-btn vote-btn-a" id="btn-run-evolve" onclick="triggerEvolution()">Run Generation</button>
+          </div>
+        </div>
+        <div id="evolve-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--brand-accent); min-height: 18px;"></div>
+      </div>
     </div>
   </main>
 
@@ -504,6 +576,7 @@
     async function onTournamentChange(id) {
       if (!id) return;
       try {
+        window.history.replaceState(null, '', `?t=${encodeURIComponent(id)}`);
         const res = await fetch(`/api/tournaments/${id}`);
         currentTournament = await res.json();
         document.getElementById('prompt-text').textContent = currentTournament.prompt || currentTournament.title;
@@ -536,6 +609,19 @@
       meta.textContent = cand.label || cand.id;
       body.innerHTML = '';
 
+      // Update triage button highlights
+      const starBtn = document.getElementById(`star-btn-${side}`);
+      const rejectBtn = document.getElementById(`reject-btn-${side}`);
+      if (starBtn && rejectBtn) {
+        starBtn.classList.remove('starred');
+        rejectBtn.classList.remove('disliked');
+        if (currentTournament && currentTournament.triage && currentTournament.triage[cand.id]) {
+          const tr = currentTournament.triage[cand.id];
+          if (tr.status === 'favorite' || tr.status === 'liked') starBtn.classList.add('starred');
+          if (tr.status === 'disliked') rejectBtn.classList.add('disliked');
+        }
+      }
+
       const taskType = currentTournament.task_type;
       if (taskType === 'image') {
         const img = document.createElement('img');
@@ -557,6 +643,9 @@
 
     async function submitVote(winner) {
       if (!currentMatchup || !currentTournament) return;
+      const notesInput = document.getElementById('matchup-notes');
+      const notes = notesInput ? notesInput.value.trim() : null;
+
       try {
         await fetch(`/api/tournaments/${currentTournament.id}/vote`, {
           method: 'POST',
@@ -564,13 +653,96 @@
           body: JSON.stringify({
             id_a: currentMatchup.candidate_a.id,
             id_b: currentMatchup.candidate_b.id,
-            winner: winner
+            winner: winner,
+            notes: notes || null
           })
         });
+        if (notesInput) notesInput.value = '';
         loadNextMatchup();
         updateLeaderboard();
       } catch (err) {
         console.error("Error submitting vote", err);
+      }
+    }
+
+    async function triageCurrent(side, status) {
+      if (!currentMatchup || !currentTournament) return;
+      const cand = side === 'a' ? currentMatchup.candidate_a : currentMatchup.candidate_b;
+      const notesInput = document.getElementById('matchup-notes');
+      const notes = notesInput ? notesInput.value.trim() : null;
+
+      // Toggle behavior: if already in this state, clicking again reverts to neutral
+      const currentStatus = (currentTournament.triage && currentTournament.triage[cand.id]) 
+        ? currentTournament.triage[cand.id].status 
+        : 'neutral';
+      const newStatus = (currentStatus === status) ? 'neutral' : status;
+
+      try {
+        await fetch(`/api/tournaments/${currentTournament.id}/triage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            candidate_id: cand.id,
+            status: newStatus,
+            notes: notes || null
+          })
+        });
+        if (!currentTournament.triage) currentTournament.triage = {};
+        currentTournament.triage[cand.id] = { status: newStatus, notes };
+        renderCandidate(side, cand);
+      } catch (err) {
+        console.error("Error submitting triage", err);
+      }
+    }
+
+    function openEvolveModal() {
+      document.getElementById('evolve-modal').style.display = 'flex';
+      document.getElementById('evolve-status').textContent = '';
+    }
+
+    function closeEvolveModal() {
+      document.getElementById('evolve-modal').style.display = 'none';
+    }
+
+    async function triggerEvolution() {
+      if (!currentTournament) return;
+      const btn = document.getElementById('btn-run-evolve');
+      const statusEl = document.getElementById('evolve-status');
+      const count = parseInt(document.getElementById('evolve-count').value, 10) || 5;
+      const instructions = document.getElementById('evolve-instructions').value.trim() || null;
+
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+      statusEl.textContent = 'Synthesizing preferences and generating candidates...';
+
+      try {
+        const res = await fetch(`/api/tournaments/${currentTournament.id}/evolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            count: count,
+            instructions: instructions,
+            backend: 'auto'
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Evolution failed');
+        }
+
+        const data = await res.json();
+        statusEl.textContent = `Success: Added ${data.new_candidates.length} new candidates!`;
+        await onTournamentChange(currentTournament.id);
+        setTimeout(() => {
+          closeEvolveModal();
+          btn.disabled = false;
+          btn.textContent = 'Run Generation';
+        }, 1200);
+      } catch (err) {
+        statusEl.textContent = `Error: ${err.message}`;
+        btn.disabled = false;
+        btn.textContent = 'Run Generation';
       }
     }
 
