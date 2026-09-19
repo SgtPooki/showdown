@@ -75,6 +75,9 @@ class Tournament(BaseModel):
     matches: List[Match] = Field(default_factory=list)
     status: TournamentStatus = TournamentStatus.ACTIVE
     accepted_candidate_id: Optional[str] = None
+    parent_ids: List[str] = Field(default_factory=list)
+    context: Optional[str] = None
+    voters: List[str] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
 
@@ -85,6 +88,8 @@ class CreateTournamentRequest(BaseModel):
     prompt: Optional[str] = None
     task_type: TaskType = TaskType.TEXT
     candidates: List[Candidate]
+    parent_ids: List[str] = Field(default_factory=list)
+    context: Optional[str] = None
     overwrite: bool = False
 
 

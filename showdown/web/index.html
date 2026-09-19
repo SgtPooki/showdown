@@ -443,7 +443,10 @@
   <main>
     <!-- Prompt Banner -->
     <div class="prompt-banner" id="prompt-banner">
-      <div class="prompt-label">Evaluation Prompt / Task</div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <div class="prompt-label" id="prompt-label">Evaluation Prompt / Task</div>
+        <div id="convergence-badge"></div>
+      </div>
       <div class="prompt-text" id="prompt-text">Loading evaluation task...</div>
     </div>
 
@@ -510,9 +513,17 @@
 
     <!-- Leaderboard View -->
     <div id="view-leaderboard" style="display: none;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
         <h2 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Candidate Leaderboard</h2>
-        <button class="vote-btn vote-btn-a" onclick="openEvolveModal()">✨ Evolve Next Generation</button>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label for="evaluator-filter" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">EVALUATOR:</label>
+            <select id="evaluator-filter" onchange="onEvaluatorChanged()" style="background: var(--bg-canvas); border: 1px solid var(--border-default); color: var(--text-primary); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 13px; font-family: 'Inter', sans-serif;">
+              <option value="pooled">All Votes (Pooled)</option>
+            </select>
+          </div>
+          <button class="vote-btn vote-btn-a" onclick="openEvolveModal()">✨ Evolve Next Generation</button>
+        </div>
       </div>
       <table class="leaderboard-table">
         <thead>
@@ -523,6 +534,7 @@
             <th>Record (W-L-T)</th>
             <th>Win Rate</th>
             <th>Matches</th>
+            <th>Delta</th>
             <th>Action</th>
           </tr>
         </thead>
@@ -569,6 +581,52 @@
           </div>
         </div>
         <div id="evolve-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--brand-accent); min-height: 18px;"></div>
+      </div>
+    </div>
+
+    <!-- Chain Next Stage Modal -->
+    <div id="chain-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-emphasis); border-radius: var(--radius-lg); width: 100%; max-width: 620px; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Continue from Winner (Next Stage)</h3>
+          <button onclick="closeChainModal()" style="background: none; border: none; color: var(--text-tertiary); font-size: 20px; cursor: pointer;">&times;</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+          Launch a sequential child tournament conditioned on the winning output of this stage as upstream context.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">UPSTREAM WINNER / CONTEXT</label>
+          <textarea id="chain-upstream-content" rows="4" readonly style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 12px; font-family: 'JetBrains Mono', monospace; resize: vertical;"></textarea>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">NEW STAGE TITLE</label>
+          <input type="text" id="chain-title" placeholder="e.g. Act II: The Escalation" style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">NEW STAGE PROMPT</label>
+          <textarea id="chain-prompt" rows="3" placeholder="e.g. Continue the story directly following the events established in the upstream winner..." style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
+        </div>
+        <div style="display: flex; gap: 16px;">
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">TASK TYPE</label>
+            <select id="chain-task-type" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;">
+              <option value="text">Text / Markdown</option>
+              <option value="code">Code</option>
+              <option value="svg">SVG Vector</option>
+              <option value="json">JSON</option>
+              <option value="diff">Diff</option>
+            </select>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">INITIAL CANDIDATES (ONE PER ENTRY, SEPARATED BY '---')</label>
+          <textarea id="chain-candidates" rows="4" placeholder="Candidate 1 content&#10;---&#10;Candidate 2 content" style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'JetBrains Mono', monospace; resize: vertical;"></textarea>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+          <button class="vote-btn vote-btn-secondary" onclick="closeChainModal()">Cancel</button>
+          <button class="vote-btn vote-btn-a" id="btn-create-chain" onclick="submitChainStage()">Create &amp; Switch Stage</button>
+        </div>
+        <div id="chain-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--brand-accent); min-height: 18px;"></div>
       </div>
     </div>
   </main>
@@ -622,6 +680,38 @@
       }
     }
 
+    function sanitizeSvg(svgContent) {
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgContent, 'image/svg+xml');
+        const parserError = doc.querySelector('parsererror');
+        if (parserError) {
+          const fallback = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          fallback.setAttribute('viewBox', '0 0 100 100');
+          return fallback;
+        }
+        const svg = doc.documentElement;
+        const dangerousTags = ['script', 'iframe', 'object', 'embed', 'foreignObject'];
+        dangerousTags.forEach(tag => {
+          svg.querySelectorAll(tag).forEach(el => el.remove());
+        });
+        const allElements = [svg, ...svg.querySelectorAll('*')];
+        allElements.forEach(el => {
+          Array.from(el.attributes).forEach(attr => {
+            const name = attr.name.toLowerCase();
+            const val = attr.value.toLowerCase().trim();
+            if (name.startsWith('on') || val.startsWith('javascript:')) {
+              el.removeAttribute(attr.name);
+            }
+          });
+        });
+        return svg;
+      } catch (e) {
+        console.error('Error sanitizing SVG:', e);
+        return document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      }
+    }
+
     async function loadNextMatchup() {
       if (!currentTournament) return;
       try {
@@ -633,6 +723,16 @@
         currentMatchup = await res.json();
         renderCandidate('a', currentMatchup.candidate_a);
         renderCandidate('b', currentMatchup.candidate_b);
+
+        const badgeEl = document.getElementById('convergence-badge');
+        if (badgeEl && currentMatchup) {
+          if (currentMatchup.converged) {
+            badgeEl.innerHTML = '<span style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; padding: 3px 10px; border-radius: 9999px; font-size: 11px; font-family: \'JetBrains Mono\', monospace; font-weight: 600;">Converged ✓</span>';
+          } else {
+            const pct = Math.round((currentMatchup.confidence || 0) * 100);
+            badgeEl.innerHTML = `<span style="background: rgba(148, 163, 184, 0.1); border: 1px solid var(--border-default); color: var(--text-secondary); padding: 3px 10px; border-radius: 9999px; font-size: 11px; font-family: 'JetBrains Mono', monospace; font-weight: 500;">Converging (${pct}%)</span>`;
+          }
+        }
       } catch (err) {
         console.error("Error loading matchup", err);
       }
@@ -665,7 +765,8 @@
 
         const wrapper = document.createElement('div');
         wrapper.style.display = 'contents';
-        wrapper.innerHTML = cand.content.trim();
+        const cleanSvg = sanitizeSvg(cand.content.trim());
+        wrapper.appendChild(cleanSvg);
         svgBox.appendChild(wrapper);
 
         const toggleBtn = document.createElement('button');
@@ -832,17 +933,66 @@
       }
     }
 
+    async function onEvaluatorChanged() {
+      await updateLeaderboard();
+    }
+
     async function updateLeaderboard() {
       if (!currentTournament) return;
-      const res = await fetch(`/api/tournaments/${currentTournament.id}`);
-      const t = await res.json();
-      currentTournament = t;
+
+      // Always fetch pooled tournament first to ensure we have latest voters list and pooled baseline
+      const resPooled = await fetch(`/api/tournaments/${currentTournament.id}`);
+      const pooledTourney = await resPooled.json();
+      currentTournament = pooledTourney;
+
+      // Update evaluator dropdown options
+      const evalSelect = document.getElementById('evaluator-filter');
+      const currentSelected = evalSelect.value || 'pooled';
+      evalSelect.innerHTML = '<option value="pooled">All Votes (Pooled)</option>';
+      const voters = pooledTourney.voters || [];
+      voters.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        evalSelect.appendChild(opt);
+      });
+      if (voters.includes(currentSelected)) {
+        evalSelect.value = currentSelected;
+      } else {
+        evalSelect.value = 'pooled';
+      }
+
+      // Calculate pooled ranks for delta calculation
+      const pooledItems = pooledTourney.candidates.map(c => {
+        const stat = pooledTourney.stats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
+        return { id: c.id, elo: stat.elo };
+      });
+      pooledItems.sort((a, b) => b.elo - a.elo);
+      const pooledRankMap = {};
+      pooledItems.forEach((item, index) => {
+        pooledRankMap[item.id] = index + 1;
+      });
+
+      // If specific evaluator selected, fetch evaluator-specific sliced stats
+      let activeStats = pooledTourney.stats;
+      const selectedEvaluator = evalSelect.value;
+      if (selectedEvaluator && selectedEvaluator !== 'pooled') {
+        try {
+          const resEval = await fetch(`/api/tournaments/${currentTournament.id}?voter=${encodeURIComponent(selectedEvaluator)}`);
+          if (resEval.ok) {
+            const evalTourney = await resEval.json();
+            activeStats = evalTourney.stats;
+          }
+        } catch (e) {
+          console.error("Failed to fetch evaluator slice", e);
+        }
+      }
 
       const tbody = document.getElementById('leaderboard-body');
       tbody.innerHTML = '';
 
-      const items = t.candidates.map(c => {
-        const stat = t.stats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
+      const items = pooledTourney.candidates.map(c => {
+        const stat = activeStats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
         const winRate = stat.matches > 0 ? Math.round((stat.wins / stat.matches) * 100) : 0;
         return { candidate: c, stat, winRate };
       });
@@ -850,30 +1000,157 @@
       items.sort((a, b) => b.stat.elo - a.stat.elo);
 
       items.forEach((item, idx) => {
-        const isWinner = currentTournament.accepted_candidate_id === item.candidate.id;
-        const actionHtml = isWinner
-          ? '<span style="color: var(--accent-success, #4ade80); font-weight: 700; font-size: 12px;">Accepted Winner</span>'
-          : `<button class="vote-btn vote-btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="acceptWinner('${item.candidate.id}')">Accept</button>`;
+        const currentRank = idx + 1;
+        const pooledRank = pooledRankMap[item.candidate.id] || currentRank;
+        const delta = pooledRank - currentRank; // Positive means ranked higher by this evaluator than pooled
 
-        let previewHtml = '';
-        if (t.task_type === 'svg' || (item.candidate.content.trim().startsWith('<svg') && item.candidate.content.includes('</svg>'))) {
-          previewHtml = `<span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:4px; padding:3px; margin-right:10px; vertical-align:middle; overflow:hidden;">${item.candidate.content}</span>`;
-        } else if (t.task_type === 'image') {
-          previewHtml = `<img src="${item.candidate.content}" style="width:32px; height:32px; object-fit:cover; border-radius:4px; margin-right:10px; vertical-align:middle;" />`;
+        let deltaHtml = '<span style="color: var(--text-tertiary); font-family: \'JetBrains Mono\', monospace;">-</span>';
+        if (selectedEvaluator !== 'pooled') {
+          if (delta > 0) {
+            deltaHtml = `<span style="color: #4ade80; font-family: 'JetBrains Mono', monospace; font-weight: 600;">+${delta}</span>`;
+          } else if (delta < 0) {
+            deltaHtml = `<span style="color: #f87171; font-family: 'JetBrains Mono', monospace; font-weight: 600;">${delta}</span>`;
+          } else {
+            deltaHtml = `<span style="color: var(--text-tertiary); font-family: 'JetBrains Mono', monospace;">=</span>`;
+          }
+        }
+
+        const isWinner = currentTournament.accepted_candidate_id === item.candidate.id;
+        let actionHtml = '';
+        if (isWinner) {
+          actionHtml = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="color: var(--status-success, #10B981); font-weight: 700; font-size: 12px;">Accepted Winner</span>
+              <button class="vote-btn vote-btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openChainModal('${item.candidate.id}')">+ Continue Stage</button>
+            </div>
+          `;
+        } else {
+          actionHtml = `<button class="vote-btn vote-btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="acceptWinner('${item.candidate.id}')">Accept</button>`;
         }
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td><strong>#${idx + 1}</strong></td>
-          <td style="display:flex; align-items:center;">${previewHtml}<span>${item.candidate.label || item.candidate.id}</span></td>
+          <td><strong>#${currentRank}</strong></td>
+          <td id="cell-cand-${item.candidate.id}" style="display:flex; align-items:center;"><span>${item.candidate.label || item.candidate.id}</span></td>
           <td><span class="elo-pill">${Math.round(item.stat.elo)}</span></td>
           <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
           <td>${item.winRate}%</td>
           <td>${item.stat.matches}</td>
+          <td>${deltaHtml}</td>
           <td>${actionHtml}</td>
         `;
         tbody.appendChild(tr);
+
+        // Prepend preview safely if SVG or image
+        const candCell = tr.querySelector(`#cell-cand-${item.candidate.id}`);
+        if (pooledTourney.task_type === 'svg' || (item.candidate.content.trim().startsWith('<svg') && item.candidate.content.includes('</svg>'))) {
+          const previewSpan = document.createElement('span');
+          previewSpan.style.cssText = 'display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; background:var(--bg-canvas); border:1px solid var(--border-subtle); border-radius:4px; padding:3px; margin-right:10px; vertical-align:middle; overflow:hidden; flex-shrink:0;';
+          const cleanThumb = sanitizeSvg(item.candidate.content.trim());
+          cleanThumb.setAttribute('width', '100%');
+          cleanThumb.setAttribute('height', '100%');
+          previewSpan.appendChild(cleanThumb);
+          candCell.insertBefore(previewSpan, candCell.firstChild);
+        } else if (pooledTourney.task_type === 'image') {
+          const img = document.createElement('img');
+          img.src = item.candidate.content;
+          img.style.cssText = 'width:32px; height:32px; object-fit:cover; border-radius:4px; margin-right:10px; vertical-align:middle; flex-shrink:0;';
+          candCell.insertBefore(img, candCell.firstChild);
+        }
       });
+    }
+
+    let chainingCandidateId = null;
+
+    function openChainModal(candidateId) {
+      if (!currentTournament) return;
+      chainingCandidateId = candidateId;
+      const cand = currentTournament.candidates.find(c => c.id === candidateId);
+      if (!cand) return;
+
+      document.getElementById('chain-upstream-content').value = cand.content;
+      document.getElementById('chain-title').value = `${currentTournament.title} - Next Stage`;
+      document.getElementById('chain-prompt').value = `Continue from the upstream winner:\n"${cand.label || cand.id}"`;
+      document.getElementById('chain-task-type').value = currentTournament.task_type || 'text';
+      document.getElementById('chain-candidates').value = '';
+      document.getElementById('chain-status').textContent = '';
+      document.getElementById('chain-modal').style.display = 'flex';
+    }
+
+    function closeChainModal() {
+      document.getElementById('chain-modal').style.display = 'none';
+      chainingCandidateId = null;
+    }
+
+    async function submitChainStage() {
+      if (!currentTournament || !chainingCandidateId) return;
+      const title = document.getElementById('chain-title').value.trim();
+      const prompt = document.getElementById('chain-prompt').value.trim();
+      const taskType = document.getElementById('chain-task-type').value;
+      const context = document.getElementById('chain-upstream-content').value;
+      const candidatesRaw = document.getElementById('chain-candidates').value.trim();
+      const statusEl = document.getElementById('chain-status');
+      const btn = document.getElementById('btn-create-chain');
+
+      if (!title) {
+        statusEl.textContent = 'Please provide a stage title.';
+        return;
+      }
+
+      let parsedCandidates = [];
+      if (candidatesRaw) {
+        const parts = candidatesRaw.includes('---')
+          ? candidatesRaw.split('---').map(s => s.trim()).filter(Boolean)
+          : candidatesRaw.split('\n\n').map(s => s.trim()).filter(Boolean);
+        parsedCandidates = parts.map((content, idx) => ({
+          id: `cand_${idx + 1}`,
+          label: `Candidate ${idx + 1}`,
+          content: content
+        }));
+      }
+
+      if (parsedCandidates.length === 0) {
+        parsedCandidates = [
+          { id: 'cand_1', label: 'Initial Draft A', content: 'Draft candidate A based on upstream context.' },
+          { id: 'cand_2', label: 'Initial Draft B', content: 'Draft candidate B based on upstream context.' }
+        ];
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Creating Stage...';
+      statusEl.textContent = 'Launching sequential tournament stage...';
+
+      try {
+        const payload = {
+          title: title,
+          prompt: prompt,
+          task_type: taskType,
+          candidates: parsedCandidates,
+          parent_ids: [currentTournament.id],
+          context: context
+        };
+        const res = await fetch('/api/tournaments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Failed to create stage');
+        }
+        const created = await res.json();
+        closeChainModal();
+        await loadTournamentList();
+        const sel = document.getElementById('tournament-select');
+        sel.value = created.id;
+        await onTournamentChange(created.id);
+        switchView('matchup');
+      } catch (err) {
+        statusEl.textContent = `Error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create & Switch Stage';
+      }
     }
 
     async function acceptWinner(candidateId) {

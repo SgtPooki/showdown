@@ -2,8 +2,10 @@
 
 import json
 import re
+import threading
 import time
 import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -12,7 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from showdown.engine import get_dynamic_k_factor, select_matchup, update_elo
+from showdown.engine import (
+    check_convergence,
+    get_dynamic_k_factor,
+    replay_stats,
+    select_matchup,
+    update_elo,
+)
 from showdown.models import (
     AcceptCandidateRequest,
     AddCandidatesRequest,
@@ -43,6 +51,7 @@ app.add_middleware(
 
 storage = Storage()
 WEB_DIR = Path(__file__).parent / "web"
+_tournament_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -83,27 +92,39 @@ def create_tournament(req: CreateTournamentRequest):
         prompt=req.prompt,
         task_type=req.task_type,
         candidates=req.candidates,
+        parent_ids=req.parent_ids,
+        context=req.context,
         created_at=now,
         updated_at=now,
     )
     for c in tournament.candidates:
         tournament.stats[c.id] = CandidateStats()
 
-    storage.save_tournament(tournament)
+    with _tournament_locks[t_id]:
+        storage.save_tournament(tournament)
     return tournament
 
 
 @app.get("/api/tournaments/{tournament_id}", response_model=Tournament)
-def get_tournament(tournament_id: str):
+def get_tournament(tournament_id: str, voter: Optional[str] = None):
     tournament = storage.load_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+
+    # Extract all distinct voters present in match history
+    tournament.voters = sorted(list({m.voter for m in tournament.matches if m.voter}))
+
+    # If a specific evaluator is requested, replay ratings for that evaluator on the fly
+    if voter and voter.strip().lower() not in ("all", "pooled", "*"):
+        tournament.stats = replay_stats(tournament.candidates, tournament.matches, voter=voter.strip())
+
     return tournament
 
 
 @app.delete("/api/tournaments/{tournament_id}")
 def delete_tournament(tournament_id: str):
-    success = storage.delete_tournament(tournament_id)
+    with _tournament_locks[tournament_id]:
+        success = storage.delete_tournament(tournament_id)
     if not success:
         raise HTTPException(status_code=404, detail="Tournament not found")
     return {"status": "deleted", "id": tournament_id}
@@ -119,81 +140,85 @@ def get_matchup(tournament_id: str):
     if not pair:
         raise HTTPException(status_code=204, detail="Not enough candidates for a matchup")
 
+    converged, confidence = check_convergence(tournament.candidates, tournament.stats)
     cand_a, cand_b = pair
     return {
         "candidate_a": cand_a,
         "candidate_b": cand_b,
         "elo_a": tournament.stats[cand_a.id].elo,
         "elo_b": tournament.stats[cand_b.id].elo,
+        "converged": converged,
+        "confidence": confidence,
     }
 
 
 @app.post("/api/tournaments/{tournament_id}/vote")
 def record_vote(tournament_id: str, vote: VoteRequest):
-    tournament = storage.load_tournament(tournament_id)
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
+    with _tournament_locks[tournament_id]:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
 
-    if vote.id_a not in tournament.stats or vote.id_b not in tournament.stats:
-        raise HTTPException(status_code=400, detail="Invalid candidate IDs")
+        if vote.id_a not in tournament.stats or vote.id_b not in tournament.stats:
+            raise HTTPException(status_code=400, detail="Invalid candidate IDs")
 
-    stat_a = tournament.stats[vote.id_a]
-    stat_b = tournament.stats[vote.id_b]
+        stat_a = tournament.stats[vote.id_a]
+        stat_b = tournament.stats[vote.id_b]
 
-    elo_a_before = stat_a.elo
-    elo_b_before = stat_b.elo
+        elo_a_before = stat_a.elo
+        elo_b_before = stat_b.elo
 
-    k = get_dynamic_k_factor(stat_a.matches, stat_b.matches)
+        k = get_dynamic_k_factor(stat_a.matches, stat_b.matches)
 
-    if vote.winner == "a":
-        score_a = 1.0
-        stat_a.wins += 1
-        stat_b.losses += 1
-        stat_a.matches += 1
-        stat_b.matches += 1
-        elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
-    elif vote.winner == "b":
-        score_a = 0.0
-        stat_b.wins += 1
-        stat_a.losses += 1
-        stat_a.matches += 1
-        stat_b.matches += 1
-        elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
-    elif vote.winner == "tie":
-        score_a = 0.5
-        stat_a.ties += 1
-        stat_b.ties += 1
-        stat_a.matches += 1
-        stat_b.matches += 1
-        elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
-    else:  # both_bad
-        stat_a.losses += 1
-        stat_b.losses += 1
-        stat_a.matches += 1
-        stat_b.matches += 1
-        penalty = round(k / 2.0, 2)
-        elo_a_after = max(100.0, round(elo_a_before - penalty, 2))
-        elo_b_after = max(100.0, round(elo_b_before - penalty, 2))
+        if vote.winner == "a":
+            score_a = 1.0
+            stat_a.wins += 1
+            stat_b.losses += 1
+            stat_a.matches += 1
+            stat_b.matches += 1
+            elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
+        elif vote.winner == "b":
+            score_a = 0.0
+            stat_b.wins += 1
+            stat_a.losses += 1
+            stat_a.matches += 1
+            stat_b.matches += 1
+            elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
+        elif vote.winner == "tie":
+            score_a = 0.5
+            stat_a.ties += 1
+            stat_b.ties += 1
+            stat_a.matches += 1
+            stat_b.matches += 1
+            elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, score_a, k_factor=k)
+        else:  # both_bad
+            stat_a.losses += 1
+            stat_b.losses += 1
+            stat_a.matches += 1
+            stat_b.matches += 1
+            penalty = round(k / 2.0, 2)
+            elo_a_after = max(100.0, round(elo_a_before - penalty, 2))
+            elo_b_after = max(100.0, round(elo_b_before - penalty, 2))
 
-    stat_a.elo = elo_a_after
-    stat_b.elo = elo_b_after
+        stat_a.elo = elo_a_after
+        stat_b.elo = elo_b_after
 
-    match_record = Match(
-        id_a=vote.id_a,
-        id_b=vote.id_b,
-        winner=vote.winner,
-        elo_a_before=elo_a_before,
-        elo_b_before=elo_b_before,
-        elo_a_after=elo_a_after,
-        elo_b_after=elo_b_after,
-        voter=vote.voter,
-        notes=vote.notes,
-        timestamp=time.time(),
-    )
-    tournament.matches.append(match_record)
-    tournament.updated_at = time.time()
+        match_record = Match(
+            id_a=vote.id_a,
+            id_b=vote.id_b,
+            winner=vote.winner,
+            elo_a_before=elo_a_before,
+            elo_b_before=elo_b_before,
+            elo_a_after=elo_a_after,
+            elo_b_after=elo_b_after,
+            voter=vote.voter,
+            notes=vote.notes,
+            timestamp=time.time(),
+        )
+        tournament.matches.append(match_record)
+        tournament.updated_at = time.time()
 
-    storage.save_tournament(tournament)
+        storage.save_tournament(tournament)
 
     return {
         "status": "recorded",
@@ -204,35 +229,37 @@ def record_vote(tournament_id: str, vote: VoteRequest):
 
 @app.post("/api/tournaments/{tournament_id}/triage")
 def record_triage(tournament_id: str, req: TriageRequest):
-    tournament = storage.load_tournament(tournament_id)
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
+    with _tournament_locks[tournament_id]:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
 
-    tournament.triage[req.candidate_id] = TriageRecord(
-        status=req.status,
-        notes=req.notes,
-        updated_at=time.time(),
-    )
-    tournament.updated_at = time.time()
-    storage.save_tournament(tournament)
+        tournament.triage[req.candidate_id] = TriageRecord(
+            status=req.status,
+            notes=req.notes,
+            updated_at=time.time(),
+        )
+        tournament.updated_at = time.time()
+        storage.save_tournament(tournament)
     return {"status": "saved", "candidate_id": req.candidate_id}
 
 
 @app.post("/api/tournaments/{tournament_id}/candidates", response_model=Tournament)
 def add_candidates(tournament_id: str, req: AddCandidatesRequest):
-    tournament = storage.load_tournament(tournament_id)
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
+    with _tournament_locks[tournament_id]:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
 
-    existing_ids = {c.id for c in tournament.candidates}
-    for c in req.candidates:
-        if c.id in existing_ids:
-            continue
-        tournament.candidates.append(c)
-        tournament.stats[c.id] = CandidateStats()
+        existing_ids = {c.id for c in tournament.candidates}
+        for c in req.candidates:
+            if c.id in existing_ids:
+                continue
+            tournament.candidates.append(c)
+            tournament.stats[c.id] = CandidateStats()
 
-    tournament.updated_at = time.time()
-    storage.save_tournament(tournament)
+        tournament.updated_at = time.time()
+        storage.save_tournament(tournament)
     return tournament
 
 
@@ -253,49 +280,90 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Reload fresh tournament to avoid overwriting votes or triage recorded during generation
-    fresh_tournament = storage.load_tournament(tournament_id) or tournament
-    existing_ids = {c.id for c in fresh_tournament.candidates}
-    for c in evolve_res.new_candidates:
-        if c.id not in existing_ids:
-            fresh_tournament.candidates.append(c)
-            fresh_tournament.stats[c.id] = CandidateStats()
+    with _tournament_locks[tournament_id]:
+        # Reload fresh tournament to avoid overwriting votes or triage recorded during generation
+        fresh_tournament = storage.load_tournament(tournament_id) or tournament
+        existing_ids = {c.id for c in fresh_tournament.candidates}
+        for c in evolve_res.new_candidates:
+            if c.id not in existing_ids:
+                fresh_tournament.candidates.append(c)
+                fresh_tournament.stats[c.id] = CandidateStats()
 
-    fresh_tournament.updated_at = time.time()
-    storage.save_tournament(fresh_tournament)
+        fresh_tournament.updated_at = time.time()
+        storage.save_tournament(fresh_tournament)
     return evolve_res
 
 
 @app.post("/api/tournaments/{tournament_id}/accept")
 def accept_candidate(tournament_id: str, req: AcceptCandidateRequest):
-    tournament = storage.load_tournament(tournament_id)
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
+    with _tournament_locks[tournament_id]:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
 
-    cand_map = {c.id: c for c in tournament.candidates}
-    if req.candidate_id not in cand_map:
-        raise HTTPException(status_code=400, detail="Candidate ID not found in tournament")
+        cand_map = {c.id: c for c in tournament.candidates}
+        if req.candidate_id not in cand_map:
+            raise HTTPException(status_code=400, detail="Candidate ID not found in tournament")
 
-    tournament.accepted_candidate_id = req.candidate_id
-    tournament.status = TournamentStatus.COMPLETED
-    tournament.updated_at = time.time()
+        tournament.accepted_candidate_id = req.candidate_id
+        tournament.status = TournamentStatus.COMPLETED
+        tournament.updated_at = time.time()
 
-    tournament.triage[req.candidate_id] = TriageRecord(
-        status=TriageStatus.FAVORITE,
-        notes=req.notes or "Selected as tournament winner",
-        updated_at=time.time(),
-    )
-    storage.save_tournament(tournament)
+        tournament.triage[req.candidate_id] = TriageRecord(
+            status=TriageStatus.FAVORITE,
+            notes=req.notes or "Selected as tournament winner",
+            updated_at=time.time(),
+        )
+        storage.save_tournament(tournament)
 
     accepted_cand = cand_map[req.candidate_id]
     stat = tournament.stats.get(req.candidate_id, CandidateStats())
-
     return {
         "status": "completed",
         "accepted_candidate_id": req.candidate_id,
         "candidate": accepted_cand.model_dump(),
         "elo": stat.elo,
+        "wins": stat.wins,
+        "losses": stat.losses,
         "notes": req.notes,
+    }
+
+
+@app.get("/api/tournaments/{tournament_id}/chain")
+def get_tournament_chain(tournament_id: str):
+    """
+    Traverse parent lineage to assemble multi-stage chained tournaments into a coherent document.
+    """
+    stages = []
+    curr_id = tournament_id
+    visited = set()
+
+    while curr_id and curr_id not in visited:
+        visited.add(curr_id)
+        t = storage.load_tournament(curr_id)
+        if not t:
+            break
+        cand_map = {c.id: c for c in t.candidates}
+        accepted = cand_map.get(t.accepted_candidate_id) if t.accepted_candidate_id else None
+        stages.append({
+            "tournament_id": t.id,
+            "title": t.title,
+            "prompt": t.prompt,
+            "task_type": t.task_type.value if hasattr(t.task_type, "value") else str(t.task_type),
+            "accepted_candidate": accepted.model_dump() if accepted else None,
+            "context": t.context,
+            "parent_ids": t.parent_ids,
+        })
+        curr_id = t.parent_ids[0] if t.parent_ids else None
+
+    stages.reverse()
+    assembled = "\n\n".join(
+        [s["accepted_candidate"]["content"] for s in stages if s.get("accepted_candidate") and s["accepted_candidate"].get("content")]
+    )
+    return {
+        "stages": stages,
+        "assembled_content": assembled,
+        "count": len(stages),
     }
 
 

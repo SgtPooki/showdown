@@ -2,6 +2,7 @@
 
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from showdown.models import Tournament, CandidateStats
@@ -37,7 +38,7 @@ class Storage:
 
     def save_tournament(self, tournament: Tournament) -> None:
         file_path = self._tournament_file(tournament.id)
-        tmp_path = file_path.with_suffix(".tmp")
+        tmp_path = file_path.parent / f"{file_path.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
         tmp_path.write_text(tournament.model_dump_json(indent=2))
         tmp_path.replace(file_path)
 
