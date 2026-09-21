@@ -85,8 +85,8 @@ def export_dataset(
         raise ValueError("min_agreement must be between 0.0 and 1.0.")
     if (consensus or min_agreement is not None) and voter and voter.strip().lower() not in ("all", "pooled", "*"):
         raise ValueError("Cannot combine 'voter' filter with multi-annotator 'consensus' or 'min_agreement'.")
-    if format not in ("dpo", "kto", "pairwise_margins", "raw"):
-        raise ValueError(f"Invalid export format '{format}'. Must be 'dpo', 'kto', 'pairwise_margins', or 'raw'.")
+    if format not in ("dpo", "kto", "pairwise_margins", "raw", "spo", "prm"):
+        raise ValueError(f"Invalid export format '{format}'. Must be 'dpo', 'kto', 'pairwise_margins', 'raw', 'spo', or 'prm'.")
 
     # Filter tournaments by task_type if requested
     if task_type:
@@ -225,6 +225,35 @@ def export_dataset(
                         rec["critique"] = t_rec.notes
                     records_by_tournament[t.id].append(rec)
 
+        elif format in ("spo", "prm"):
+            from showdown.trajectories import extract_candidate_steps
+            for cand in t.candidates:
+                steps = extract_candidate_steps(cand)
+                for step in steps:
+                    for ann in step.annotations:
+                        if voter and voter.strip().lower() not in ("all", "pooled", "*"):
+                            if ann.voter != voter:
+                                continue
+                        tag_val = ann.tag.value if hasattr(ann.tag, "value") else str(ann.tag)
+                        score = 1.0 if tag_val == "exemplary" else (0.0 if tag_val == "incorrect" else 0.5)
+                        rec = {
+                            "prompt": prompt,
+                            "candidate_id": cand.id,
+                            "step_index": step.step_index,
+                            "thought": step.thought,
+                            "tool_name": step.tool_name,
+                            "tool_args": step.tool_args,
+                            "tool_output": step.tool_output,
+                            "duration_seconds": step.duration_seconds,
+                            "tag": tag_val,
+                            "label": score,
+                            "notes": ann.notes,
+                            "voter": ann.voter,
+                            "tournament_id": t.id,
+                            "task_type": t.task_type.value,
+                        }
+                        records_by_tournament[t.id].append(rec)
+
         elif format == "raw":
             for m in t.matches:
                 records_by_tournament[t.id].append(m.model_dump())
@@ -239,6 +268,8 @@ def export_dataset(
                     key = (rec["prompt"].strip(), rec["chosen"].strip(), rec["rejected"].strip())
                 elif format == "kto":
                     key = (rec["prompt"].strip(), rec["completion"].strip(), rec["label"])
+                elif format in ("spo", "prm"):
+                    key = (rec["prompt"].strip(), rec["candidate_id"], rec["step_index"], rec.get("voter"), rec["tag"])
                 else:
                     key = (rec.get("id_a"), rec.get("id_b"), rec.get("timestamp"))
                 if key not in seen_keys:

@@ -55,7 +55,7 @@ def list_tournaments():
 @app.command()
 def create(
     title: str = typer.Option(..., "--title", "-t", help="Tournament title"),
-    task_type: TaskType = typer.Option(TaskType.TEXT, "--type", help="Task type (text, markdown, code, diff, image, json)"),
+    task_type: TaskType = typer.Option(TaskType.TEXT, "--type", help="Task type (text, markdown, code, diff, image, json, svg, trajectory)"),
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="JSON file containing list of candidates"),
     item: Optional[List[str]] = typer.Option(None, "--item", "-i", help="Candidate item content (can be specified multiple times)"),
     prompt: Optional[str] = typer.Option(None, "--prompt", help="Evaluation prompt or task instructions"),
@@ -126,8 +126,8 @@ def create(
 def export(
     tournament_id: Optional[str] = typer.Argument(None, help="Tournament ID (optional if --all is set)"),
     all_tournaments: bool = typer.Option(False, "--all", "-a", help="Export preferences across all tournaments"),
-    format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'kto', 'pairwise_margins', 'leaderboard', or 'raw'"),
-    task_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by task type: 'code', 'text', 'svg', 'markdown'"),
+    format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'kto', 'pairwise_margins', 'spo', 'prm', 'leaderboard', or 'raw'"),
+    task_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by task type: 'code', 'text', 'svg', 'trajectory', 'markdown'"),
     voter: Optional[str] = typer.Option(None, "--voter", "-v", help="Filter export to matches by specific evaluator"),
     consensus: Optional[str] = typer.Option(None, "--consensus", help="Consensus mode: 'strict' (unanimous >=2 voters) or 'majority'"),
     min_agreement: Optional[float] = typer.Option(None, "--min-agreement", help="Minimum agreement threshold (0.5 to 1.0)"),

@@ -407,6 +407,65 @@ def mcp_export_dataset(
         return {"error": str(e)}
 
 
+@server.tool()
+def showdown_get_trajectory(
+    tournament_id: str,
+    candidate_id: str,
+) -> Dict[str, Any]:
+    """
+    Retrieve structured trajectory steps and execution summary for an agent candidate.
+
+    Args:
+        tournament_id: Tournament ID.
+        candidate_id: Candidate ID.
+
+    Returns:
+        Dictionary containing candidate ID, steps, and execution summary.
+    """
+    from showdown.server import get_candidate_trajectory
+    try:
+        return get_candidate_trajectory(tournament_id, candidate_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@server.tool()
+def showdown_annotate_step(
+    tournament_id: str,
+    candidate_id: str,
+    step_index: int,
+    tag: str,
+    notes: Optional[str] = None,
+    voter: Optional[str] = "human",
+) -> Dict[str, Any]:
+    """
+    Add or update step-level commentary / tag for Process Reward Models (PRM) & Step-level Preference Optimization (SPO).
+
+    Args:
+        tournament_id: Tournament ID.
+        candidate_id: Candidate ID.
+        step_index: Integer index of the trajectory step.
+        tag: 'exemplary', 'inefficient', 'incorrect', or 'neutral'.
+        notes: Optional explanation or critique of this specific tool invocation.
+        voter: Identifier of the reviewer.
+
+    Returns:
+        Updated annotation details and summary.
+    """
+    from showdown.models import StepAnnotationRequest, StepAnnotationTag
+    from showdown.server import annotate_candidate_step
+    try:
+        tag_enum = StepAnnotationTag(tag.lower())
+    except ValueError:
+        return {"error": f"Invalid tag '{tag}'. Must be 'exemplary', 'inefficient', 'incorrect', or 'neutral'."}
+
+    try:
+        req = StepAnnotationRequest(tag=tag_enum, notes=notes, voter=voter)
+        return annotate_candidate_step(tournament_id, candidate_id, step_index, req)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def run_mcp_server(transport: str = "stdio", data_dir: Optional[str] = None) -> None:
     """Run the Showdown MCP server."""
     if data_dir:

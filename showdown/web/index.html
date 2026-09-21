@@ -377,6 +377,140 @@
       font-size: 13px;
     }
 
+    /* Trajectory Viewer */
+    .trajectory-container {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      width: 100%;
+    }
+    .trajectory-summary-banner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      align-items: center;
+    }
+    .trajectory-metric-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-primary);
+    }
+    .trajectory-step-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s ease;
+    }
+    .trajectory-step-card:hover {
+      border-color: var(--border-emphasis);
+    }
+    .trajectory-step-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      user-select: none;
+    }
+    .trajectory-step-body {
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .trajectory-thought {
+      font-style: italic;
+      color: var(--text-secondary);
+      background: var(--bg-canvas);
+      padding: 8px 12px;
+      border-left: 3px solid var(--brand-accent);
+      border-radius: var(--radius-sm);
+      line-height: 1.5;
+    }
+    .trajectory-tool-call {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      overflow-x: auto;
+    }
+    .trajectory-tool-output {
+      background: #0f172a;
+      color: #e2e8f0;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      max-height: 220px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .trajectory-triage-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--bg-canvas);
+      border-top: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+    }
+    .step-tag-btn {
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      border: 1px solid var(--border-default);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .step-tag-btn:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+    .step-tag-btn.active-exemplary {
+      background: rgba(34, 197, 94, 0.15);
+      border-color: #22c55e;
+      color: #4ade80;
+      font-weight: 600;
+    }
+    .step-tag-btn.active-inefficient {
+      background: rgba(234, 179, 8, 0.15);
+      border-color: #eab308;
+      color: #fde047;
+      font-weight: 600;
+    }
+    .step-tag-btn.active-incorrect {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: #ef4444;
+      color: #f87171;
+      font-weight: 600;
+    }
+
     /* Empty state */
     .empty-state {
       padding: 60px 20px;
@@ -656,6 +790,7 @@
               <option value="svg">SVG Vector</option>
               <option value="json">JSON</option>
               <option value="diff">Diff</option>
+              <option value="trajectory">Agent Trajectory</option>
             </select>
           </div>
         </div>
@@ -1019,11 +1154,256 @@
           pre.appendChild(div);
         });
         body.appendChild(pre);
+      } else if (taskType === 'trajectory') {
+        renderTrajectory(body, cand);
       } else {
-        // Markdown or Prose
-        const div = document.createElement('div');
-        div.innerHTML = marked.parse(cand.content);
-        body.appendChild(div);
+        let isTraj = false;
+        if (cand.content.trim().startsWith('{') || cand.content.trim().startsWith('[')) {
+          try {
+            const parsed = JSON.parse(cand.content);
+            if (Array.isArray(parsed) && parsed.length > 0 && (parsed[0].tool_name || parsed[0].tool || parsed[0].thought || parsed[0].reasoning)) {
+              isTraj = true;
+            } else if (parsed && typeof parsed === 'object' && (parsed.steps || parsed.trajectory)) {
+              isTraj = true;
+            }
+          } catch (e) {}
+        }
+
+        if (isTraj) {
+          renderTrajectory(body, cand);
+        } else {
+          // Markdown or Prose
+          const div = document.createElement('div');
+          div.innerHTML = marked.parse(cand.content);
+          body.appendChild(div);
+        }
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function renderTrajectory(container, cand) {
+      let rawSteps = [];
+      let finalArtifact = null;
+
+      try {
+        const parsed = typeof cand.content === 'string' ? JSON.parse(cand.content) : cand.content;
+        if (Array.isArray(parsed)) {
+          rawSteps = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          rawSteps = parsed.steps || parsed.trajectory || parsed.transcript || [];
+          finalArtifact = parsed.final_artifact || parsed.artifact || null;
+        }
+      } catch (err) {
+        rawSteps = [];
+      }
+
+      if (!rawSteps || rawSteps.length === 0) {
+        const pre = document.createElement('pre');
+        pre.className = 'candidate-code';
+        pre.textContent = cand.content;
+        container.appendChild(pre);
+        return;
+      }
+
+      const metaAnn = (cand.metadata && cand.metadata.step_annotations) ? cand.metadata.step_annotations : {};
+
+      let totalDuration = 0;
+      let totalTokens = 0;
+      let totalToolCalls = 0;
+      let errorCount = 0;
+
+      rawSteps.forEach((s, idx) => {
+        const duration = parseFloat(s.duration_seconds || s.duration || 0);
+        if (!isNaN(duration)) totalDuration += duration;
+        if (s.tool_name || s.tool || s.action) totalToolCalls++;
+        if (s.status === 'error' || s.error) errorCount++;
+        if (s.tokens) {
+          if (typeof s.tokens === 'number') totalTokens += s.tokens;
+          else if (s.tokens.total) totalTokens += s.tokens.total;
+          else totalTokens += (s.tokens.prompt || 0) + (s.tokens.completion || 0);
+        }
+      });
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'trajectory-container';
+
+      const banner = document.createElement('div');
+      banner.className = 'trajectory-summary-banner';
+      banner.innerHTML = `
+        <span class="trajectory-metric-pill">⏱️ ${totalDuration.toFixed(1)}s</span>
+        <span class="trajectory-metric-pill">🛠️ ${totalToolCalls} Tool Calls</span>
+        <span class="trajectory-metric-pill">🪙 ${totalTokens.toLocaleString()} Tokens</span>
+        <span class="trajectory-metric-pill" style="${errorCount > 0 ? 'color: #f87171; border-color: rgba(239, 68, 68, 0.4);' : ''}">${errorCount > 0 ? '⚠️ ' + errorCount + ' Retries' : '✅ 0 Errors'}</span>
+      `;
+      wrapper.appendChild(banner);
+
+      if (finalArtifact) {
+        const artifactBtn = document.createElement('button');
+        artifactBtn.className = 'svg-source-toggle';
+        artifactBtn.textContent = 'View Final Artifact';
+        const artifactPre = document.createElement('pre');
+        artifactPre.className = 'candidate-code';
+        artifactPre.style.display = 'none';
+        artifactPre.style.marginTop = '8px';
+        artifactPre.textContent = typeof finalArtifact === 'object' ? JSON.stringify(finalArtifact, null, 2) : String(finalArtifact);
+        artifactBtn.onclick = () => {
+          const isHidden = artifactPre.style.display === 'none';
+          artifactPre.style.display = isHidden ? 'block' : 'none';
+          artifactBtn.textContent = isHidden ? 'Hide Final Artifact' : 'View Final Artifact';
+        };
+        wrapper.appendChild(artifactBtn);
+        wrapper.appendChild(artifactPre);
+      }
+
+      rawSteps.forEach((s, idx) => {
+        const rawStepIdx = s.step_index !== undefined ? s.step_index : (s.index !== undefined ? s.index : idx);
+        const parsedIdx = parseInt(rawStepIdx, 10);
+        const stepIdx = isNaN(parsedIdx) ? idx : parsedIdx;
+        const displayIdx = stepIdx + 1;
+        const tool = s.tool_name || s.tool || s.action;
+        const thought = s.thought || s.reasoning || s.thinking;
+        const args = s.tool_args || s.args || s.parameters || s.input;
+        const output = s.tool_output || s.output || s.result || s.observation;
+        const duration = parseFloat(s.duration_seconds || s.duration);
+        const status = s.status || (s.error ? 'error' : 'success');
+
+        const stepCard = document.createElement('div');
+        stepCard.className = 'trajectory-step-card';
+
+        const header = document.createElement('div');
+        header.className = 'trajectory-step-header';
+        const statusColor = status === 'error' ? '#f87171' : '#4ade80';
+        const statusBg = status === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)';
+
+        header.innerHTML = `
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 700; color: var(--text-primary);">#${displayIdx}</span>
+            <span style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 2px 6px; border-radius: 4px; font-size: 11px;">${tool ? escapeHtml(tool) : '💭 Reasoning'}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            ${!isNaN(duration) ? `<span style="color: var(--text-secondary); font-size: 11px;">${duration.toFixed(2)}s</span>` : ''}
+            <span style="background: ${statusBg}; color: ${statusColor}; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase;">${escapeHtml(status)}</span>
+            <span class="step-toggle-icon" style="color: var(--text-secondary); font-size: 10px;">▼</span>
+          </div>
+        `;
+
+        const stepBody = document.createElement('div');
+        stepBody.className = 'trajectory-step-body';
+
+        if (thought) {
+          const thoughtDiv = document.createElement('div');
+          thoughtDiv.className = 'trajectory-thought';
+          thoughtDiv.textContent = thought;
+          stepBody.appendChild(thoughtDiv);
+        }
+
+        if (args !== undefined && args !== null) {
+          const callDiv = document.createElement('div');
+          callDiv.className = 'trajectory-tool-call';
+          callDiv.innerHTML = `<span style="color: var(--text-secondary); font-size: 11px;">ARGUMENTS:</span><pre style="margin: 4px 0 0 0; white-space: pre-wrap;">${typeof args === 'object' ? escapeHtml(JSON.stringify(args, null, 2)) : escapeHtml(String(args))}</pre>`;
+          stepBody.appendChild(callDiv);
+        }
+
+        if (output !== undefined && output !== null) {
+          const outDiv = document.createElement('div');
+          outDiv.className = 'trajectory-tool-output';
+          outDiv.innerHTML = `<span style="color: #94a3b8; font-size: 11px;">OBSERVATION:</span><pre style="margin: 4px 0 0 0; white-space: pre-wrap;">${escapeHtml(String(output))}</pre>`;
+          stepBody.appendChild(outDiv);
+        }
+
+        header.onclick = () => {
+          const isCollapsed = stepBody.style.display === 'none';
+          stepBody.style.display = isCollapsed ? 'flex' : 'none';
+          header.querySelector('.step-toggle-icon').textContent = isCollapsed ? '▼' : '▶';
+        };
+
+        const triageBar = document.createElement('div');
+        triageBar.className = 'trajectory-triage-bar';
+
+        const evalLabel = document.createElement('span');
+        evalLabel.style.fontSize = '11px';
+        evalLabel.style.fontFamily = "'JetBrains Mono', monospace";
+        evalLabel.style.color = 'var(--text-secondary)';
+        evalLabel.textContent = 'STEP EVAL:';
+        triageBar.appendChild(evalLabel);
+
+        const activeAnn = (metaAnn[String(stepIdx)] || []).find(a => a.voter === 'human') ||
+                          (s.annotations || []).find(a => a.voter === 'human');
+        const activeTag = activeAnn ? activeAnn.tag : null;
+
+        const tagOptions = [
+          { tag: 'exemplary', label: '✨ Exemplary' },
+          { tag: 'inefficient', label: '🐌 Inefficient' },
+          { tag: 'incorrect', label: '❌ Incorrect' },
+        ];
+
+        tagOptions.forEach(({ tag, label }) => {
+          const btn = document.createElement('button');
+          btn.className = `step-tag-btn ${activeTag === tag ? 'active-' + tag : ''}`;
+          btn.textContent = label;
+          btn.addEventListener('click', (e) => {
+            toggleStepAnnotation(e, cand, stepIdx, tag);
+          });
+          triageBar.appendChild(btn);
+        });
+
+        stepCard.appendChild(header);
+        stepCard.appendChild(stepBody);
+        stepCard.appendChild(triageBar);
+        wrapper.appendChild(stepCard);
+      });
+
+      container.appendChild(wrapper);
+    }
+
+    async function toggleStepAnnotation(event, cand, stepIndex, tag) {
+      event.stopPropagation();
+      if (!currentTournament) return;
+
+      const btn = event.currentTarget;
+      const isAlreadyActive = btn.classList.contains(`active-${tag}`);
+      const key = String(stepIndex);
+
+      try {
+        if (isAlreadyActive) {
+          const res = await fetch(`/api/tournaments/${currentTournament.id}/candidates/${encodeURIComponent(cand.id)}/steps/${stepIndex}/annotate?voter=human`, {
+            method: 'DELETE'
+          });
+          if (!res.ok) return;
+          btn.classList.remove(`active-${tag}`);
+          if (cand.metadata && cand.metadata.step_annotations && cand.metadata.step_annotations[key]) {
+            cand.metadata.step_annotations[key] = cand.metadata.step_annotations[key].filter(a => a.voter !== 'human');
+          }
+        } else {
+          const res = await fetch(`/api/tournaments/${currentTournament.id}/candidates/${encodeURIComponent(cand.id)}/steps/${stepIndex}/annotate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: tag, voter: 'human' })
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          const parent = btn.parentElement;
+          parent.querySelectorAll('.step-tag-btn').forEach(b => {
+            b.className = 'step-tag-btn';
+          });
+          btn.classList.add(`active-${tag}`);
+          if (!cand.metadata) cand.metadata = {};
+          if (!cand.metadata.step_annotations) cand.metadata.step_annotations = {};
+          if (!cand.metadata.step_annotations[key]) cand.metadata.step_annotations[key] = [];
+          cand.metadata.step_annotations[key] = cand.metadata.step_annotations[key].filter(a => a.voter !== 'human');
+          cand.metadata.step_annotations[key].push(data.annotation);
+        }
+      } catch (err) {
+        console.error("Failed to update step annotation", err);
       }
     }
 

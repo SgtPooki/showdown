@@ -1,0 +1,17 @@
+{
+  "title": "Code Optimization: Recursive Fibonacci to Iterative",
+  "prompt": "Optimize recursive Fibonacci function to O(N) runtime without breaking test assertions.",
+  "task_type": "trajectory",
+  "candidates": [
+    {
+      "id": "agent-iterative",
+      "label": "Agent Alpha (Iterative DP)",
+      "content": "{\"steps\": [{\"step_index\": 0, \"thought\": \"Let's inspect the target file to understand the current implementation and test cases.\", \"tool_name\": \"view_file\", \"tool_args\": {\"path\": \"math_utils.py\"}, \"tool_output\": \"def fib(n):\\n    if n <= 1: return n\\n    return fib(n-1) + fib(n-2)\", \"duration_seconds\": 0.82, \"tokens\": {\"prompt\": 240, \"completion\": 45, \"total\": 285}, \"status\": \"success\"}, {\"step_index\": 1, \"thought\": \"The current solution is O(2^n). Let's refactor into an iterative O(n) loop with O(1) space.\", \"tool_name\": \"replace_file_content\", \"tool_args\": {\"path\": \"math_utils.py\", \"start_line\": 1, \"end_line\": 3, \"replacement\": \"def fib(n):\\n    if n < 0: raise ValueError('Negative index not supported')\\n    a, b = 0, 1\\n    for _ in range(n):\\n        a, b = b, a + b\\n    return a\"}, \"tool_output\": \"Successfully updated lines 1-3.\", \"duration_seconds\": 1.15, \"tokens\": {\"prompt\": 380, \"completion\": 85, \"total\": 465}, \"status\": \"success\"}, {\"step_index\": 2, \"thought\": \"Now run the test suite to verify correctness and edge cases.\", \"tool_name\": \"run_command\", \"tool_args\": {\"cmd\": \"pytest tests/test_fib.py\"}, \"tool_output\": \"test_fib.py ............ [100%]\\n12 passed in 0.04s\", \"duration_seconds\": 1.45, \"tokens\": {\"prompt\": 210, \"completion\": 40, \"total\": 250}, \"status\": \"success\"}], \"final_artifact\": \"def fib(n):\\n    if n < 0: raise ValueError('Negative index not supported')\\n    a, b = 0, 1\\n    for _ in range(n):\\n        a, b = b, a + b\\n    return a\"}"
+    },
+    {
+      "id": "agent-floating-binet",
+      "label": "Agent Beta (Binet Closed Form)",
+      "content": "{\"steps\": [{\"step_index\": 0, \"thought\": \"Let's delete the file and recreate it directly.\", \"tool_name\": \"run_command\", \"tool_args\": {\"cmd\": \"rm math_utils.py\"}, \"tool_output\": \"rm: cannot remove 'math_utils.py': No such file or directory\", \"duration_seconds\": 0.52, \"tokens\": {\"prompt\": 150, \"completion\": 25, \"total\": 175}, \"status\": \"error\"}, {\"step_index\": 1, \"thought\": \"The file must be under src/. Let's write Binet formula to src/math_utils.py.\", \"tool_name\": \"write_to_file\", \"tool_args\": {\"path\": \"src/math_utils.py\", \"content\": \"import math\\ndef fib(n):\\n    phi = (1 + math.sqrt(5)) / 2\\n    return round((phi**n) / math.sqrt(5))\"}, \"tool_output\": \"File created successfully.\", \"duration_seconds\": 1.35, \"tokens\": {\"prompt\": 320, \"completion\": 65, \"total\": 385}, \"status\": \"success\"}, {\"step_index\": 2, \"thought\": \"Let's test large numbers with pytest.\", \"tool_name\": \"run_command\", \"tool_args\": {\"cmd\": \"pytest tests/test_fib.py\"}, \"tool_output\": \"FAILED tests/test_fib.py::test_large_fib - Precision loss for n=75: expected 2111485077978050, got 2111485077978052\", \"duration_seconds\": 2.45, \"tokens\": {\"prompt\": 410, \"completion\": 70, \"total\": 480}, \"status\": \"error\"}], \"final_artifact\": \"import math\\ndef fib(n):\\n    phi = (1 + math.sqrt(5)) / 2\\n    return round((phi**n) / math.sqrt(5))\"}"
+    }
+  ]
+}

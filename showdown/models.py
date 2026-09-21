@@ -14,6 +14,48 @@ class TaskType(str, Enum):
     IMAGE = "image"
     JSON = "json"
     SVG = "svg"
+    TRAJECTORY = "trajectory"
+
+
+class StepAnnotationTag(str, Enum):
+    EXEMPLARY = "exemplary"
+    INEFFICIENT = "inefficient"
+    INCORRECT = "incorrect"
+    NEUTRAL = "neutral"
+
+
+class StepAnnotation(BaseModel):
+    step_index: int
+    tag: StepAnnotationTag
+    notes: Optional[str] = None
+    voter: Optional[str] = "human"
+    timestamp: float = Field(default_factory=time.time)
+
+
+class TrajectoryStep(BaseModel):
+    step_index: int
+    thought: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args: Optional[Any] = None
+    tool_output: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    tokens: Optional[Dict[str, int]] = None
+    status: Optional[str] = "success"  # "success", "error", "retry"
+    annotations: List[StepAnnotation] = Field(default_factory=list)
+
+
+class TrajectorySummary(BaseModel):
+    total_steps: int = 0
+    total_duration_seconds: float = 0.0
+    total_tokens: int = 0
+    total_tool_calls: int = 0
+    error_count: int = 0
+
+
+class StepAnnotationRequest(BaseModel):
+    tag: StepAnnotationTag
+    notes: Optional[str] = None
+    voter: Optional[str] = "human"
 
 
 class TournamentStatus(str, Enum):

@@ -43,6 +43,9 @@ from showdown.models import (
     VoteRequest,
     JudgeRequest,
     JudgeResponse,
+    StepAnnotation,
+    StepAnnotationRequest,
+    StepAnnotationTag,
 )
 from showdown.storage import Storage
 
@@ -362,6 +365,113 @@ def add_candidates(tournament_id: str, req: AddCandidatesRequest):
         tournament.updated_at = time.time()
         storage.save_tournament(tournament)
     return tournament
+
+
+@app.get("/api/tournaments/{tournament_id}/candidates/{candidate_id}/trajectory")
+def get_candidate_trajectory(tournament_id: str, candidate_id: str):
+    """Retrieve parsed trajectory steps and execution summary for a candidate."""
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    cand = next((c for c in tournament.candidates if c.id == candidate_id), None)
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    from showdown.trajectories import compute_trajectory_summary, extract_candidate_steps
+    steps = extract_candidate_steps(cand)
+    summary = compute_trajectory_summary(steps)
+    return {
+        "candidate_id": candidate_id,
+        "steps": [s.model_dump() for s in steps],
+        "summary": summary.model_dump(),
+    }
+
+
+@app.post("/api/tournaments/{tournament_id}/candidates/{candidate_id}/steps/{step_index}/annotate")
+def annotate_candidate_step(tournament_id: str, candidate_id: str, step_index: int, req: StepAnnotationRequest):
+    """Add or update step-level commentary / tag for Process Reward Models & SPO."""
+    with storage.lock_tournament(tournament_id):
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
+        cand = next((c for c in tournament.candidates if c.id == candidate_id), None)
+        if not cand:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        from showdown.trajectories import compute_trajectory_summary, extract_candidate_steps
+
+        # Validate that the candidate has this step_index
+        existing_steps = extract_candidate_steps(cand)
+        valid_indices = {s.step_index for s in existing_steps}
+        if step_index not in valid_indices:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Step index {step_index} not found on candidate '{candidate_id}'. Available steps: {sorted(list(valid_indices))}",
+            )
+
+        annotation = StepAnnotation(
+            step_index=step_index,
+            tag=req.tag,
+            notes=req.notes,
+            voter=req.voter or "human",
+            timestamp=time.time(),
+        )
+
+        meta = cand.metadata.setdefault("step_annotations", {})
+        key = str(step_index)
+        existing_list = meta.setdefault(key, [])
+        voter_id = req.voter or "human"
+        # Overwrite previous annotation by this voter on this step
+        meta[key] = [a for a in existing_list if a.get("voter") != voter_id]
+        meta[key].append(annotation.model_dump())
+
+        tournament.updated_at = time.time()
+        storage.save_tournament(tournament)
+
+        steps = extract_candidate_steps(cand)
+        summary = compute_trajectory_summary(steps)
+
+    return {
+        "status": "annotated",
+        "candidate_id": candidate_id,
+        "step_index": step_index,
+        "annotation": annotation.model_dump(),
+        "summary": summary.model_dump(),
+    }
+
+
+@app.delete("/api/tournaments/{tournament_id}/candidates/{candidate_id}/steps/{step_index}/annotate")
+def delete_candidate_step_annotation(tournament_id: str, candidate_id: str, step_index: int, voter: Optional[str] = "human"):
+    """Delete a step-level annotation."""
+    with storage.lock_tournament(tournament_id):
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
+        cand = next((c for c in tournament.candidates if c.id == candidate_id), None)
+        if not cand:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        from showdown.trajectories import extract_candidate_steps
+        existing_steps = extract_candidate_steps(cand)
+        valid_indices = {s.step_index for s in existing_steps}
+        if step_index not in valid_indices:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Step index {step_index} not found on candidate '{candidate_id}'",
+            )
+
+        meta = cand.metadata.get("step_annotations", {})
+        key = str(step_index)
+        if key in meta:
+            target_voter = voter or "human"
+            meta[key] = [a for a in meta[key] if a.get("voter") != target_voter]
+            if not meta[key]:
+                del meta[key]
+
+        tournament.updated_at = time.time()
+        storage.save_tournament(tournament)
+
+    return {"status": "deleted", "candidate_id": candidate_id, "step_index": step_index}
 
 
 @app.post("/api/tournaments/{tournament_id}/evolve", response_model=EvolveResponse)
