@@ -22,6 +22,7 @@ async def test_mcp_list_tools():
         "showdown_evolve_candidates",
         "showdown_get_chain",
         "showdown_export_dataset",
+        "showdown_run_judge",
     ]
     for exp in expected:
         assert exp in tool_names, f"Missing MCP tool: {exp}"
@@ -208,5 +209,39 @@ async def test_mcp_evolve_success_structure(monkeypatch, tmp_path):
         assert len(evolve_data["new_candidates"]) == 1
         assert evolve_data["prompt_used"] == "Mutate faster"
         assert evolve_data["summary"] == "Synthesized preferences successfully"
+    finally:
+        storage.data_dir = orig_dir
+
+
+@pytest.mark.anyio
+async def test_mcp_run_judge(monkeypatch, tmp_path):
+    orig_dir = storage.data_dir
+    storage.data_dir = tmp_path
+
+    try:
+        from unittest.mock import patch
+
+        t_res = await server.call_tool(
+            "showdown_create_tournament",
+            {
+                "title": "Judge MCP Arena",
+                "candidates": [{"id": "c1", "content": "A"}, {"id": "c2", "content": "B"}],
+            },
+        )
+        t_id = t_res.structured_content["result"]["tournament_id"]
+
+        with patch(
+            "showdown.judge.call_judge_backend",
+            return_value='{"winner": "A", "critique": "A is cleaner"}',
+        ):
+            judge_res = await server.call_tool(
+                "showdown_run_judge",
+                {"tournament_id": t_id, "rounds": 1, "backend": "omp", "swap_positions": False},
+            )
+            assert judge_res.is_error is False
+            j_data = judge_res.structured_content["result"]
+            assert j_data["tournament_id"] == t_id
+            assert j_data["matches_evaluated"] == 1
+            assert j_data["voter"] == "judge:omp"
     finally:
         storage.data_dir = orig_dir

@@ -136,3 +136,36 @@ class UpdateTournamentRequest(BaseModel):
     blinded: Optional[bool] = None
     context: Optional[str] = None
 
+
+class JudgeRequest(BaseModel):
+    backend: Optional[str] = "auto"
+    rounds: int = Field(default=5, ge=1, le=20)
+    rubric: Optional[str] = None
+    swap_positions: bool = True
+    voter: Optional[str] = None
+    mode: str = "active"  # "active", "controversial", "close"
+    stop_on_convergence: bool = False
+
+
+class JudgeMatchResult(BaseModel):
+    id_a: str
+    id_b: str
+    winner: str
+    critique: Optional[str] = None
+    swapped_consistent: bool = True
+    elo_a_after: float
+    elo_b_after: float
+
+
+class JudgeResponse(BaseModel):
+    tournament_id: str
+    backend: str
+    voter: str
+    rounds_requested: int
+    matches_evaluated: int
+    consistent_matches: int
+    contradictions: int
+    converged: bool
+    confidence: float
+    results: List[JudgeMatchResult] = Field(default_factory=list)
+

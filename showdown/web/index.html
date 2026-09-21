@@ -431,6 +431,7 @@
       <button id="nav-leaderboard" class="nav-tab" onclick="switchView('leaderboard')">Leaderboard</button>
       <button id="nav-export" class="nav-tab" onclick="switchView('export')">Export DPO</button>
       <button id="nav-evolve" class="nav-tab" style="color: var(--brand-accent); font-weight: 600;" onclick="openEvolveModal()">Evolve Pool</button>
+      <button id="nav-judge" class="nav-tab" style="color: #c084fc; font-weight: 600;" onclick="openJudgeModal()">Run Judge</button>
     </div>
 
     <div style="display: flex; align-items: center; gap: 10px;">
@@ -446,7 +447,17 @@
     <div class="prompt-banner" id="prompt-banner">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
         <div class="prompt-label" id="prompt-label">Evaluation Prompt / Task</div>
-        <div id="convergence-badge"></div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label for="matchup-routing-select" style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-tertiary);">ROUTING:</label>
+            <select id="matchup-routing-select" onchange="onRoutingModeChanged(this.value)" style="background: var(--bg-canvas); border: 1px solid var(--border-subtle); color: var(--text-secondary); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 11px; font-family: 'JetBrains Mono', monospace; cursor: pointer;">
+              <option value="active">Active (Balanced)</option>
+              <option value="controversial">Controversial / Biased</option>
+              <option value="close">Close Elo Triage</option>
+            </select>
+          </div>
+          <div id="convergence-badge"></div>
+        </div>
       </div>
       <div class="prompt-text" id="prompt-text">Loading evaluation task...</div>
     </div>
@@ -521,6 +532,7 @@
         <div style="display: flex; align-items: center; gap: 10px;">
           <h2 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Candidate Leaderboard</h2>
           <span id="agreement-pill" style="display: none; font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 3px 10px; border-radius: 9999px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--brand-accent);"></span>
+          <span id="human-judge-pill" style="display: none; font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 3px 10px; border-radius: 9999px; background: rgba(168, 85, 247, 0.12); border: 1px solid rgba(168, 85, 247, 0.3); color: #c084fc;"></span>
           <span id="consistency-pill" style="display: none; font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 3px 10px; border-radius: 9999px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); color: #34d399;"></span>
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
@@ -531,6 +543,7 @@
             </select>
           </div>
           <button class="vote-btn vote-btn-a" onclick="openEvolveModal()">Evolve Next Generation</button>
+          <button class="vote-btn" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc;" onclick="openJudgeModal()">Run Automated Judge</button>
         </div>
       </div>
       <table class="leaderboard-table">
@@ -651,6 +664,48 @@
           <button class="vote-btn vote-btn-a" id="btn-create-chain" onclick="submitChainStage()">Create &amp; Switch Stage</button>
         </div>
         <div id="chain-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--brand-accent); min-height: 18px;"></div>
+      </div>
+    </div>
+
+    <!-- LLM Judge Modal -->
+    <div id="modal-judge" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); max-width: 520px; width: 90%; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px; color: #c084fc;">Automated LLM-as-a-Judge</h3>
+          <button onclick="closeJudgeModal()" style="background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer;">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 0;">
+          Run automated pairwise evaluation rounds using an LLM judge. Evaluates matchups, applies position-bias order swapping, and generates critique rationales.
+        </p>
+        <div style="display: flex; gap: 12px;">
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">BACKEND</label>
+            <select id="judge-backend" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;">
+              <option value="auto">Auto Detect (Local OMP / Claude / Codex)</option>
+              <option value="omp">OMP (Homelab Local vLLM)</option>
+              <option value="claude">Claude CLI</option>
+              <option value="codex">Codex CLI</option>
+              <option value="openai">OpenAI API / Compatible</option>
+            </select>
+          </div>
+          <div style="width: 110px; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">ROUNDS</label>
+            <input type="number" id="judge-rounds" value="5" min="1" max="50" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="judge-swap" checked style="cursor: pointer;" />
+          <label for="judge-swap" style="font-size: 13px; color: var(--text-primary); cursor: pointer;">Mitigate position bias (order swapping A/B and B/A)</label>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">CUSTOM RUBRIC / CRITERIA (OPTIONAL)</label>
+          <textarea id="judge-rubric" rows="3" placeholder="Leave blank to use default task rubric..." style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;">
+          <button class="vote-btn vote-btn-secondary" onclick="closeJudgeModal()">Cancel</button>
+          <button class="vote-btn" id="btn-run-judge" style="background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.5); color: #c084fc; font-weight: 600;" onclick="submitJudgeRounds()">Start Judging</button>
+        </div>
+        <div id="judge-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: #c084fc; min-height: 18px;"></div>
       </div>
     </div>
   </main>
@@ -844,10 +899,17 @@
       }
     }
 
+    let currentRoutingMode = 'active';
+
+    function onRoutingModeChanged(mode) {
+      currentRoutingMode = mode;
+      loadNextMatchup();
+    }
+
     async function loadNextMatchup() {
       if (!currentTournament) return;
       try {
-        const res = await fetch(`/api/tournaments/${currentTournament.id}/matchup`);
+        const res = await fetch(`/api/tournaments/${currentTournament.id}/matchup?mode=${encodeURIComponent(currentRoutingMode)}`);
         if (res.status === 404 || res.status === 204) {
           document.getElementById('view-matchup').innerHTML = '<div class="empty-state">Need at least 2 candidates to generate a matchup.</div>';
           return;
@@ -1069,6 +1131,63 @@
       }
     }
 
+    function openJudgeModal() {
+      const modal = document.getElementById('modal-judge');
+      if (!modal) return;
+      document.getElementById('judge-status').textContent = '';
+      modal.style.display = 'flex';
+    }
+
+    function closeJudgeModal() {
+      const modal = document.getElementById('modal-judge');
+      if (!modal) return;
+      modal.style.display = 'none';
+    }
+
+    async function submitJudgeRounds() {
+      if (!currentTournament) return;
+      const btn = document.getElementById('btn-run-judge');
+      const status = document.getElementById('judge-status');
+      const backend = document.getElementById('judge-backend').value;
+      const rounds = parseInt(document.getElementById('judge-rounds').value, 10) || 5;
+      const swap = document.getElementById('judge-swap').checked;
+      const rubric = document.getElementById('judge-rubric').value.trim() || null;
+
+      btn.disabled = true;
+      btn.textContent = 'Judging in Progress...';
+      status.textContent = `Evaluating ${rounds} rounds via ${backend} (swap=${swap})...`;
+
+      try {
+        const res = await fetch(`/api/tournaments/${currentTournament.id}/judge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            backend: backend,
+            rounds: rounds,
+            swap_positions: swap,
+            rubric: rubric,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Judge execution failed');
+        }
+        const data = await res.json();
+        status.textContent = `Completed ${data.matches_evaluated} rounds! Consistent: ${data.consistent_matches}, Contradictions: ${data.contradictions}.`;
+        showToast(`Judge completed ${data.matches_evaluated} rounds successfully!`);
+        await onTournamentChange(currentTournament.id);
+        setTimeout(() => {
+          closeJudgeModal();
+          btn.disabled = false;
+          btn.textContent = 'Start Judging';
+        }, 1200);
+      } catch (err) {
+        status.textContent = `Error: ${err.message}`;
+        btn.disabled = false;
+        btn.textContent = 'Start Judging';
+      }
+    }
+
     async function onEvaluatorChanged() {
       await updateLeaderboard();
     }
@@ -1114,6 +1233,9 @@
 
       // Fetch inter-annotator agreement if >= 2 voters
       const agreementPill = document.getElementById('agreement-pill');
+      const humanJudgePill = document.getElementById('human-judge-pill');
+      if (humanJudgePill) humanJudgePill.style.display = 'none';
+
       if (agreementPill) {
         if (voters.length >= 2) {
           fetch(`/api/tournaments/${currentTournament.id}/agreement`)
@@ -1126,10 +1248,22 @@
               } else {
                 agreementPill.style.display = 'none';
               }
+
+              if (humanJudgePill && agreeData && agreeData.human_vs_judge && agreeData.human_vs_judge.agreement_rate !== null) {
+                const hjPct = Math.round(agreeData.human_vs_judge.agreement_rate * 100);
+                humanJudgePill.style.display = 'inline-block';
+                humanJudgePill.textContent = `Human-Judge Alignment: ${hjPct}% (${agreeData.human_vs_judge.shared_pairs_evaluated} shared)`;
+              } else if (humanJudgePill) {
+                humanJudgePill.style.display = 'none';
+              }
             })
-            .catch(() => { agreementPill.style.display = 'none'; });
+            .catch(() => {
+              agreementPill.style.display = 'none';
+              if (humanJudgePill) humanJudgePill.style.display = 'none';
+            });
         } else {
           agreementPill.style.display = 'none';
+          if (humanJudgePill) humanJudgePill.style.display = 'none';
         }
       }
 

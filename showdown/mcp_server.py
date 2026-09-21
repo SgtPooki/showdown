@@ -307,6 +307,46 @@ def showdown_get_consistency(
     return get_voter_consistency(tournament_id=tournament_id, voter=voter)
 
 
+@server.tool()
+def showdown_run_judge(
+    tournament_id: str,
+    rounds: int = 5,
+    backend: str = "auto",
+    rubric: Optional[str] = None,
+    swap_positions: bool = True,
+    voter: Optional[str] = None,
+    mode: str = "active",
+    stop_on_convergence: bool = False,
+) -> Dict[str, Any]:
+    """
+    Run automated LLM-as-a-judge comparison rounds on a tournament.
+
+    Args:
+        tournament_id: ID of the tournament to judge.
+        rounds: Number of pairwise comparisons to evaluate (default 5).
+        backend: LLM backend ('auto', 'omp', 'claude', 'codex', 'openai').
+        rubric: Optional custom evaluation criteria or guidelines.
+        swap_positions: Whether to evaluate both A vs B and B vs A to mitigate position bias (default True).
+        voter: Custom evaluator identifier tag (defaults to judge:<backend>).
+        mode: Matchup selection strategy ('active', 'controversial', 'close').
+        stop_on_convergence: If True, halts evaluation early once the top candidate statistically separates.
+
+    Returns:
+        Summary of matches evaluated, consistency, convergence status, and results.
+    """
+    from showdown.client import run_judge
+    return run_judge(
+        tournament_id=tournament_id,
+        rounds=rounds,
+        backend=backend,
+        rubric=rubric,
+        swap_positions=swap_positions,
+        voter=voter,
+        mode=mode,
+        stop_on_convergence=stop_on_convergence,
+    )
+
+
 def run_mcp_server(transport: str = "stdio", data_dir: Optional[str] = None) -> None:
     """Run the Showdown MCP server."""
     if data_dir:

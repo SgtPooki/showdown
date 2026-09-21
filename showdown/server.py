@@ -39,6 +39,8 @@ from showdown.models import (
     Tournament,
     UpdateTournamentRequest,
     VoteRequest,
+    JudgeRequest,
+    JudgeResponse,
 )
 from showdown.storage import Storage
 
@@ -134,12 +136,18 @@ def delete_tournament(tournament_id: str):
 
 
 @app.get("/api/tournaments/{tournament_id}/matchup")
-def get_matchup(tournament_id: str):
+def get_matchup(
+    tournament_id: str,
+    mode: str = "active",
+):
+    if mode not in ("active", "controversial", "close"):
+        raise HTTPException(status_code=400, detail=f"Invalid matchup mode '{mode}'. Must be 'active', 'controversial', or 'close'.")
+
     tournament = storage.load_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    pair = select_matchup(tournament)
+    pair = select_matchup(tournament, mode=mode)
     if not pair:
         raise HTTPException(status_code=204, detail="Not enough candidates for a matchup")
 
@@ -152,6 +160,7 @@ def get_matchup(tournament_id: str):
         "elo_b": tournament.stats[cand_b.id].elo,
         "converged": converged,
         "confidence": confidence,
+        "mode": mode,
     }
 
 
@@ -370,6 +379,33 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
         fresh_tournament.updated_at = time.time()
         storage.save_tournament(fresh_tournament)
     return evolve_res
+
+
+@app.post("/api/tournaments/{tournament_id}/judge", response_model=JudgeResponse)
+def judge_tournament_endpoint(tournament_id: str, req: JudgeRequest):
+    if req.mode not in ("active", "controversial", "close"):
+        raise HTTPException(status_code=400, detail=f"Invalid judge mode '{req.mode}'. Must be 'active', 'controversial', or 'close'.")
+
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        from showdown.judge import run_tournament_judge
+        judge_res = run_tournament_judge(
+            tournament=tournament,
+            rounds=req.rounds,
+            backend=req.backend,
+            rubric=req.rubric,
+            swap_positions=req.swap_positions,
+            voter=req.voter,
+            mode=req.mode,
+            stop_on_convergence=req.stop_on_convergence,
+            storage=storage,
+        )
+        return judge_res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tournaments/{tournament_id}/accept")

@@ -139,3 +139,43 @@ def undo_vote(
         return server_undo_vote(tournament_id=tournament_id)
     finally:
         showdown.server.storage = original_storage
+
+
+def run_judge(
+    tournament_id: str,
+    rounds: int = 5,
+    backend: Optional[str] = "auto",
+    rubric: Optional[str] = None,
+    swap_positions: bool = True,
+    voter: Optional[str] = None,
+    mode: str = "active",
+    stop_on_convergence: bool = False,
+    data_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run automated LLM-as-a-judge tournament rounds."""
+    from showdown.models import JudgeRequest
+    from showdown.server import judge_tournament_endpoint
+    import showdown.server
+
+    req = JudgeRequest(
+        rounds=rounds,
+        backend=backend,
+        rubric=rubric,
+        swap_positions=swap_positions,
+        voter=voter,
+        mode=mode,
+        stop_on_convergence=stop_on_convergence,
+    )
+
+    if data_dir:
+        storage = Storage(data_dir=data_dir)
+        original_storage = showdown.server.storage
+        showdown.server.storage = storage
+        try:
+            res = judge_tournament_endpoint(tournament_id=tournament_id, req=req)
+            return res.model_dump()
+        finally:
+            showdown.server.storage = original_storage
+
+    res = judge_tournament_endpoint(tournament_id=tournament_id, req=req)
+    return res.model_dump()

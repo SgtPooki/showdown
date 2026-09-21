@@ -265,6 +265,72 @@ def install_skill(
 
 
 @app.command()
+def judge(
+    tournament_id: str = typer.Argument(..., help="Tournament ID to judge"),
+    backend: str = typer.Option("auto", "--backend", "-b", help="LLM backend: 'auto', 'omp', 'claude', 'codex', 'openai'"),
+    rounds: int = typer.Option(5, "--rounds", "-r", help="Number of match rounds to evaluate"),
+    rubric: Optional[Path] = typer.Option(None, "--rubric", help="Optional file path or custom rubric criteria"),
+    swap: bool = typer.Option(True, "--swap/--no-swap", help="Mitigate position bias by evaluating swapped pairs"),
+    voter: Optional[str] = typer.Option(None, "--voter", "-v", help="Custom voter identifier (defaults to judge:<backend>)"),
+    mode: str = typer.Option("active", "--mode", "-m", help="Matchup selection strategy: 'active', 'controversial', or 'close'"),
+    stop_on_convergence: bool = typer.Option(False, "--stop-on-convergence", help="Stop evaluation early if tournament converges"),
+):
+    """Run automated LLM-as-a-judge tournament rounds with position-bias mitigation."""
+    storage = Storage()
+    t = storage.load_tournament(tournament_id)
+    if not t:
+        console.print(f"[red]Error: Tournament '{tournament_id}' not found.[/red]")
+        raise typer.Exit(code=1)
+
+    rubric_text = None
+    if rubric:
+        if rubric.exists():
+            rubric_text = rubric.read_text().strip()
+        else:
+            rubric_text = str(rubric)
+
+    from showdown.client import run_judge
+
+    console.print(f"[bold cyan]Starting LLM-as-a-judge runner on '{tournament_id}'[/bold cyan] (backend={backend}, rounds={rounds}, swap={swap}, mode={mode})")
+    res = run_judge(
+        tournament_id=tournament_id,
+        rounds=rounds,
+        backend=backend,
+        rubric=rubric_text,
+        swap_positions=swap,
+        voter=voter,
+        mode=mode,
+        stop_on_convergence=stop_on_convergence,
+    )
+
+    console.print(f"[bold green]Evaluated {res['matches_evaluated']} matches[/bold green] (consistent={res['consistent_matches']}, contradictions={res['contradictions']})")
+    if res["converged"]:
+        console.print(f"[bold green]Tournament converged![/bold green] Confidence: {res['confidence'] * 100:.0f}%")
+    else:
+        console.print(f"Convergence confidence: {res['confidence'] * 100:.0f}%")
+
+    table = Table(title=f"Judge Results ({res['voter']})")
+    table.add_column("Candidate A", style="cyan")
+    table.add_column("Candidate B", style="magenta")
+    table.add_column("Winner", style="bold yellow")
+    table.add_column("Consistent", style="green")
+    table.add_column("Critique", style="white", max_width=60)
+
+    for r in res["results"]:
+        consistent_label = "Yes" if r["swapped_consistent"] else "No (Bias/Abstain)"
+        if not swap:
+            consistent_label = "N/A"
+        table.add_row(
+            r["id_a"],
+            r["id_b"],
+            r["winner"].upper(),
+            consistent_label,
+            r["critique"] or "",
+        )
+    console.print(table)
+
+
+@app.command()
 def mcp(
     transport: str = typer.Option("stdio", "--transport", "-t", help="Transport protocol ('stdio', 'sse')"),
     data_dir: Optional[str] = typer.Option(None, "--data-dir", "-d", help="Custom storage directory"),

@@ -51,25 +51,66 @@ def update_elo(
     return round(new_a, 2), round(new_b, 2)
 
 
-def select_matchup(tournament: Tournament) -> Optional[Tuple[Candidate, Candidate]]:
+def select_matchup(
+    tournament: Tournament,
+    mode: str = "active",
+) -> Optional[Tuple[Candidate, Candidate]]:
     """
     Select an optimal next pair of candidates for comparison.
-    Strategy:
-    1. Prioritize candidates with the fewest matches played (exploration).
-    2. Pair candidates with similar Elo ratings (exploitation / highest information gain).
-    3. Avoid recently repeated matchups.
+    Strategies:
+    - 'active' (default): exploration + exploitation (fewest matches + similar Elo).
+    - 'controversial': pairs with position-bias contradictions or evaluator disagreements.
+    - 'close': candidates with the closest Elo ratings for decisive triage.
     """
     candidates = tournament.candidates
     if len(candidates) < 2:
         return None
 
+    cand_map = {c.id: c for c in candidates}
+
     # Track match history counts between pairs
     pair_counts: Dict[Tuple[str, str], int] = {}
+    controversial_pairs: List[Tuple[str, str]] = []
+
     for m in tournament.matches:
         pair = tuple(sorted([m.id_a, m.id_b]))
         pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        if m.notes and ("contradiction" in m.notes.lower() or "position-bias" in m.notes.lower()):
+            if pair not in controversial_pairs:
+                controversial_pairs.append(pair)
 
-    # Sort candidates by number of matches played
+    if mode == "controversial" and controversial_pairs:
+        # Pick the most controversial pair with fewest total evaluations
+        controversial_pairs.sort(key=lambda p: pair_counts.get(p, 0))
+        c_a_id, c_b_id = controversial_pairs[0]
+        if c_a_id in cand_map and c_b_id in cand_map:
+            cand_a, cand_b = cand_map[c_a_id], cand_map[c_b_id]
+            if random.random() > 0.5:
+                return cand_a, cand_b
+            return cand_b, cand_a
+
+    if mode in ("close", "controversial"):
+        # Find closest Elo pair among candidates
+        all_pairs = []
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                c1 = candidates[i]
+                c2 = candidates[j]
+                s1 = tournament.stats.get(c1.id, CandidateStats())
+                s2 = tournament.stats.get(c2.id, CandidateStats())
+                elo_diff = abs(s1.elo - s2.elo)
+                p_key = tuple(sorted([c1.id, c2.id]))
+                p_count = pair_counts.get(p_key, 0)
+                all_pairs.append((elo_diff + (p_count * 50.0), c1, c2))
+
+        all_pairs.sort(key=lambda item: item[0])
+        if all_pairs:
+            _, c_a, c_b = all_pairs[0]
+            if random.random() > 0.5:
+                return c_a, c_b
+            return c_b, c_a
+
+    # Standard active selection
     def get_matches(c: Candidate) -> int:
         stat = tournament.stats.get(c.id)
         return stat.matches if stat else 0
@@ -152,7 +193,7 @@ def replay_stats(
             stat_a.matches += 1
             stat_b.matches += 1
             elo_a_after, elo_b_after = update_elo(elo_a_before, elo_b_before, 0.5, k_factor=k)
-        else:  # both_bad
+        elif m.winner == "both_bad":
             stat_a.losses += 1
             stat_b.losses += 1
             stat_a.matches += 1
@@ -160,6 +201,9 @@ def replay_stats(
             penalty = round(k / 2.0, 2)
             elo_a_after = max(100.0, round(elo_a_before - penalty, 2))
             elo_b_after = max(100.0, round(elo_b_before - penalty, 2))
+        else:
+            # e.g. 'abstain' or unrecognized outcome — do not shift ratings
+            continue
 
         stat_a.elo = elo_a_after
         stat_b.elo = elo_b_after
@@ -286,11 +330,31 @@ def compute_inter_annotator_agreement(
 
     overall_rate = round(total_agreements / total_decisive, 3) if total_decisive > 0 else None
 
+    # Calculate concordance specifically between human voters and synthetic LLM judges
+    human_judge_agreements = 0
+    human_judge_decisive = 0
+    for p in evaluator_pairs:
+        v1_is_judge = str(p["evaluator_a"]).startswith("judge:")
+        v2_is_judge = str(p["evaluator_b"]).startswith("judge:")
+        if v1_is_judge != v2_is_judge:
+            human_judge_agreements += p["agreements"]
+            human_judge_decisive += p["decisive_pairs_count"]
+
+    human_vs_judge = None
+    if human_judge_decisive > 0:
+        human_vs_judge = {
+            "shared_pairs_evaluated": human_judge_decisive,
+            "agreements": human_judge_agreements,
+            "reversals": human_judge_decisive - human_judge_agreements,
+            "agreement_rate": round(human_judge_agreements / human_judge_decisive, 3),
+        }
+
     return {
         "voters": voters,
         "total_matches": len(matches),
         "shared_pairs_evaluated": total_decisive,
         "overall_agreement_rate": overall_rate,
+        "human_vs_judge": human_vs_judge,
         "evaluator_pairs": evaluator_pairs,
     }
 
