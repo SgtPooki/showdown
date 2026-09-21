@@ -60,6 +60,10 @@ def create(
     item: Optional[List[str]] = typer.Option(None, "--item", "-i", help="Candidate item content (can be specified multiple times)"),
     prompt: Optional[str] = typer.Option(None, "--prompt", help="Evaluation prompt or task instructions"),
     tournament_id: Optional[str] = typer.Option(None, "--id", help="Custom tournament ID"),
+    parent: Optional[List[str]] = typer.Option(None, "--parent", help="Parent tournament ID(s) to chain from"),
+    chain_mode: str = typer.Option("growth", "--chain-mode", help="Chaining strategy: 'growth' or 'divergence'"),
+    context: Optional[str] = typer.Option(None, "--context", help="Optional upstream context text"),
+    blinded: bool = typer.Option(False, "--blinded", help="Enable blind mode to mask candidate labels during voting"),
     port: int = typer.Option(8000, "--port", "-p", help="Server port for URL preview"),
 ):
     """Create a new tournament from a JSON file or direct items."""
@@ -114,12 +118,47 @@ def create(
         prompt=prompt,
         task_type=task_type,
         candidates=candidates,
+        parent_ids=parent or [],
+        chain_mode=chain_mode,
+        context=context,
+        blinded=blinded,
     )
     t = create_tournament(req)
 
     console.print(f"[bold green]Tournament created:[/bold green] [cyan]{t.id}[/cyan]")
     console.print(f"Candidates: [white]{len(t.candidates)}[/white]")
+    if t.parent_ids:
+        console.print(f"Chained from parents: [dim]{', '.join(t.parent_ids)}[/dim] (strategy: {t.chain_mode})")
     console.print(f"Start ranking at: [underline blue]http://localhost:{port}/?t={t.id}[/underline blue]")
+
+
+@app.command()
+def evolve(
+    tournament_id: str = typer.Argument(..., help="Tournament ID to evolve"),
+    count: int = typer.Option(5, "--count", "-c", help="Number of new candidates to generate"),
+    mode: str = typer.Option("refine", "--mode", "-m", help="Evolution mode: 'refine', 'diverge', or 'hybrid'"),
+    wildcards: Optional[int] = typer.Option(None, "--wildcards", "-w", help="Number of exploration wildcards if mode is hybrid"),
+    instructions: Optional[str] = typer.Option(None, "--instructions", "-i", help="Additional creative guidance or constraints"),
+    backend: Optional[str] = typer.Option("auto", "--backend", "-b", help="LLM backend: 'auto', 'claude', 'omp', 'codex', 'openai'"),
+):
+    """Synthesize new candidate variations with preference learning, divergence, or hybrid novelty injection."""
+    from showdown.models import EvolveRequest
+    from showdown.server import evolve_tournament_endpoint
+
+    req = EvolveRequest(
+        count=count,
+        instructions=instructions,
+        backend=backend,
+        mode=mode,
+        wildcards=wildcards,
+    )
+    res = evolve_tournament_endpoint(tournament_id, req)
+    console.print(f"[bold green]Evolution successful ({res.mode} mode):[/bold green] [cyan]{len(res.new_candidates)} new candidates added[/cyan]")
+    console.print(f"Summary: [dim]{res.summary}[/dim]")
+    for c in res.new_candidates:
+        wildcard_tag = " [magenta][🎲 Wildcard][/magenta]" if c.metadata.get("wildcard") else ""
+        differs = f" - [dim]{c.metadata.get('differs_by')}[/dim]" if c.metadata.get("differs_by") else ""
+        console.print(f"  • [bold]{c.label or c.id}[/bold]{wildcard_tag}{differs}")
 
 
 @app.command()

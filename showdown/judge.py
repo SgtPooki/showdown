@@ -83,12 +83,17 @@ def build_judge_prompt(
     task_prompt: Optional[str] = None,
     rubric: Optional[str] = None,
     task_type: TaskType = TaskType.TEXT,
+    context: Optional[str] = None,
 ) -> str:
     """Build the head-to-head comparison prompt for the judge model."""
     type_str = task_type.value if hasattr(task_type, "value") else str(task_type)
     resolved_rubric = rubric or DEFAULT_RUBRICS.get(type_str, DEFAULT_RUBRICS["text"])
 
-    prompt_context = f"\n[Task Prompt / Instructions]:\n{task_prompt}\n" if task_prompt else ""
+    prompt_context = ""
+    if context and context.strip():
+        prompt_context += f"\n[Upstream Stage Context / Baseline]:\n{context.strip()}\n"
+    if task_prompt and task_prompt.strip():
+        prompt_context += f"\n[Task Prompt / Instructions]:\n{task_prompt.strip()}\n"
 
     return f"""You are an impartial, expert evaluator judging a blind head-to-head comparison between Candidate A and Candidate B.
 {prompt_context}
@@ -255,13 +260,14 @@ def evaluate_pair(
     task_type: TaskType = TaskType.TEXT,
     backend: str = "auto",
     swap_positions: bool = True,
+    context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate a pair of candidates with position-bias mitigation (order swapping).
     Returns dict with final winner ('a', 'b', 'tie'), critique notes, and swap consistency.
     """
     # Presentation 1: A vs B
-    prompt_1 = build_judge_prompt(candidate_a, candidate_b, task_prompt, rubric, task_type)
+    prompt_1 = build_judge_prompt(candidate_a, candidate_b, task_prompt, rubric, task_type, context=context)
     raw_1 = call_judge_backend(prompt_1, backend=backend)
     w1, c1 = parse_judge_output(raw_1)
 
@@ -276,7 +282,7 @@ def evaluate_pair(
         }
 
     # Presentation 2: B vs A (mitigate positional bias)
-    prompt_2 = build_judge_prompt(candidate_b, candidate_a, task_prompt, rubric, task_type)
+    prompt_2 = build_judge_prompt(candidate_b, candidate_a, task_prompt, rubric, task_type, context=context)
     raw_2 = call_judge_backend(prompt_2, backend=backend)
     w2, c2 = parse_judge_output(raw_2)
 
@@ -363,6 +369,7 @@ def run_tournament_judge(
             task_type=tournament.task_type,
             backend=resolved_backend,
             swap_positions=swap_positions,
+            context=tournament.context,
         )
 
         winner = eval_result["winner"]

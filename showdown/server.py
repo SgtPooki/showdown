@@ -94,6 +94,13 @@ def create_tournament(req: CreateTournamentRequest):
         while storage.has_tournament(t_id):
             t_id = f"{clean_title}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
 
+    resolved_context = req.context
+    if (not resolved_context or not resolved_context.strip()) and req.parent_ids:
+        from showdown.evolve import resolve_upstream_context
+        up = resolve_upstream_context(req.parent_ids, storage)
+        if up and up.get("content"):
+            resolved_context = f"Stage: {up.get('parent_title', 'Parent Stage')}\nWinner ({up.get('label', '')}):\n{up.get('content', '')}"
+
     now = time.time()
     tournament = Tournament(
         id=t_id,
@@ -102,7 +109,8 @@ def create_tournament(req: CreateTournamentRequest):
         task_type=req.task_type,
         candidates=req.candidates,
         parent_ids=req.parent_ids,
-        context=req.context,
+        chain_mode=req.chain_mode or "growth",
+        context=resolved_context,
         blinded=req.blinded,
         created_at=now,
         updated_at=now,
@@ -487,6 +495,10 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
             count=req.count,
             instructions=req.instructions,
             backend=req.backend,
+            mode=req.mode or "refine",
+            wildcards=req.wildcards,
+            chain_mode=req.chain_mode,
+            storage=storage,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

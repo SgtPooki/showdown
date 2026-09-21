@@ -22,6 +22,7 @@ def create_tournament(
     tournament_id: Optional[str] = None,
     parent_ids: Optional[List[str]] = None,
     context: Optional[str] = None,
+    chain_mode: Optional[str] = "growth",
     blinded: bool = False,
     data_dir: Optional[str] = None,
     overwrite: bool = False,
@@ -38,6 +39,7 @@ def create_tournament(
         tournament_id: Optional custom slug/id.
         parent_ids: Optional parent tournament IDs to chain from.
         context: Optional context text from upstream tournaments.
+        chain_mode: Chaining strategy: 'growth' (continuity) or 'divergence' (contrast).
         blinded: If True, candidate metadata is obscured during evaluation.
         data_dir: Optional custom data storage directory.
         overwrite: If True, overwrite existing tournament with the same ID.
@@ -69,6 +71,7 @@ def create_tournament(
         candidates=parsed_candidates,
         parent_ids=parent_ids or [],
         context=context,
+        chain_mode=chain_mode,
         blinded=blinded,
         overwrite=overwrite,
     )

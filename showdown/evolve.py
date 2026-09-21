@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from showdown.models import (
     Candidate,
@@ -17,6 +17,42 @@ from showdown.models import (
     TriageStatus,
     Tournament,
 )
+from showdown.storage import Storage
+
+
+def resolve_upstream_context(
+    tournament_or_parent_ids: Union[Tournament, List[str]],
+    storage: Storage,
+) -> Optional[Dict[str, Any]]:
+    """
+    Resolve upstream context from parent stage(s).
+    Inherits ONLY officially accepted winners from parent tournaments.
+    Per peer review recommendations, does NOT fall back to provisional leaders.
+    """
+    parent_ids = (
+        tournament_or_parent_ids.parent_ids
+        if isinstance(tournament_or_parent_ids, Tournament)
+        else tournament_or_parent_ids
+    )
+    if not parent_ids:
+        return None
+
+    for p_id in parent_ids:
+        parent = storage.load_tournament(p_id)
+        if not parent or not parent.accepted_candidate_id:
+            continue
+        accepted = next((c for c in parent.candidates if c.id == parent.accepted_candidate_id), None)
+        if accepted:
+            return {
+                "tournament_id": parent.id,
+                "parent_title": parent.title,
+                "parent_prompt": parent.prompt,
+                "id": accepted.id,
+                "label": accepted.label or accepted.id,
+                "content": accepted.content,
+            }
+
+    return None
 
 
 def extract_tournament_preferences(tournament: Tournament) -> Dict[str, Any]:
@@ -106,26 +142,63 @@ def build_evolution_prompt(
     tournament: Tournament,
     count: int = 5,
     instructions: Optional[str] = None,
+    mode: str = "refine",
+    chain_mode: Optional[str] = None,
+    upstream_context: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str]:
-    """Construct an evolution synthesis prompt from tournament preferences."""
+    """
+    Construct an evolution synthesis prompt from tournament preferences.
+    Supports continuity/growth refinement and structural axis divergence/novelty injection.
+    """
     prefs = extract_tournament_preferences(tournament)
+    is_diverge = mode == "diverge" or (chain_mode == "divergence" and mode != "refine")
 
-    prompt_lines = [
-        "You are an expert generation engine optimizing candidate outputs based on human preference learning.",
-        f"Goal / Task: {tournament.prompt or tournament.title}",
-        f"Task Type: {tournament.task_type.value}",
-        "",
-        "### High-Performing Winners (The user prefers attributes found here):",
-    ]
+    if is_diverge:
+        prompt_lines = [
+            "You are an expert generation engine exploring creative divergence and structural novelty based on human preference learning.",
+            f"Goal / Task: {tournament.prompt or tournament.title}",
+            f"Task Type: {tournament.task_type.value}",
+            "",
+        ]
+    else:
+        prompt_lines = [
+            "You are an expert generation engine optimizing candidate outputs based on human preference learning.",
+            f"Goal / Task: {tournament.prompt or tournament.title}",
+            f"Task Type: {tournament.task_type.value}",
+            "",
+        ]
+
+    # Include upstream baseline if available
+    if upstream_context:
+        prompt_lines.extend([
+            f"### Upstream Stage Baseline (Accepted Winner from '{upstream_context.get('parent_title', 'Parent Stage')}'):",
+            f"Winner Label: {upstream_context.get('label')}",
+            "Winner Content:",
+            f"{upstream_context.get('content')}",
+            "",
+        ])
+    elif tournament.context and tournament.context.strip():
+        prompt_lines.extend([
+            "### Upstream Stage Context / Baseline:",
+            tournament.context.strip(),
+            "",
+        ])
+
+    # Top performers / established winners
+    if is_diverge:
+        prompt_lines.append("### Baseline / Established Contenders (The anchor direction to structurally diverge from):")
+    else:
+        prompt_lines.append("### High-Performing Winners (The user prefers attributes found here):")
 
     if prefs["top_performers"]:
         for p in prefs["top_performers"]:
             note_str = f" [Note: {p['notes']}]" if p["notes"] else ""
             prompt_lines.append(f"- {p['label']} (Elo {p['elo']}): {p['content']}{note_str}")
-    else:
+    elif not upstream_context and not tournament.context:
         prompt_lines.append("- (No clear winners yet; explore diverse directions aligned with the goal)")
 
-    prompt_lines.append("\n### Low-Performing / Rejected (The user disliked or eliminated these):")
+    # Bottom performers / eliminated candidates (MUST preserve even in divergence mode for quality floor)
+    prompt_lines.append("\n### Low-Performing / Rejected (The user disliked or eliminated these failure modes):")
     if prefs["bottom_performers"]:
         for p in prefs["bottom_performers"]:
             note_str = f" [Note: {p['notes']}]" if p["notes"] else ""
@@ -143,32 +216,58 @@ def build_evolution_prompt(
 
     type_specific_guidance = ""
     if tournament.task_type == TaskType.SVG:
-        type_specific_guidance = "\n5. For each candidate, 'content' MUST be a clean, valid, standalone inline SVG string starting with '<svg' and ending with '</svg>', containing viewBox, width, height, and well-styled SVG elements."
+        type_specific_guidance = "\n   For each candidate, 'content' MUST be a clean, valid, standalone inline SVG string starting with '<svg' and ending with '</svg>', containing viewBox, width, height, and well-styled SVG elements."
     elif tournament.task_type == TaskType.CODE:
-        type_specific_guidance = "\n5. For each candidate, 'content' MUST be clean, executable code without outer markdown quotes."
+        type_specific_guidance = "\n   For each candidate, 'content' MUST be clean, executable code without outer markdown quotes."
 
-    prompt_lines.append(f"""
+    if is_diverge:
+        prompt_lines.append(f"""
+### Divergence & Structural Novelty Instructions:
+Generate exactly {count} NEW candidate variations that structurally diverge and explore uncharted creative territory.
+CRITICAL REQUIREMENTS FOR DIVERGENCE:
+1. Structural Axis Divergence: Identify 3–4 foundational structural axes of the baseline/top performers (e.g. paradigm/methodology, viewpoint/tone, pacing, architectural philosophy, aesthetic style).
+2. Distinct Stances: Each candidate MUST take a distinct, intentional stance on at least 2 of these structural axes relative to the baseline.
+3. No Negation Collapse: Do NOT create outputs that merely negate or reference the baseline (e.g., never say 'Unlike the previous solution...' or write meta commentary). The candidate content must be a self-contained, high-caliber artifact that stands entirely on its own.
+4. Quality Floor & Negative Constraints: Strictly respect the task goal and all user critiques and notes. Strictly avoid all failure modes, bad patterns, or themes seen in the low-performing/rejected candidates.
+5. Output Format:
+   Output ONLY a JSON array of objects with 'label', 'content', and 'differs_by' keys. Do not include markdown code block formatting or explanation. Example format:
+   [
+     {{
+       "label": "Candidate Name",
+       "content": "...",{type_specific_guidance}
+       "differs_by": "Explores an asynchronous event-driven paradigm with terse imperative tone rather than monolithic functional structure."
+     }}
+   ]
+""")
+        summary = f"Synthesized structural divergence prompt for {count} novelty candidates from {len(prefs['top_performers'])} baseline anchors, {len(prefs['bottom_performers'])} rejected items, and {len(prefs['notes'])} notes."
+    else:
+        prompt_lines.append(f"""
 ### Generation Instructions:
 Generate exactly {count} NEW distinct candidate variations that:
-1. If high-performing winners exist, emphasize and refine their patterns. Otherwise, explore diverse creative variations.
+1. If high-performing winners or upstream baselines exist, emphasize, deepen, and refine their patterns. Otherwise, explore diverse creative variations.
 2. Strictly avoid patterns, words, or styles seen in the low-performing / rejected candidates.
 3. Explicitly honor the user's critiques, notes, and dislikes.
 4. Keep the outputs punchy, relevant, and high caliber.{type_specific_guidance}
 
-Output ONLY a JSON array of objects with 'label' and 'content' keys. Do not include markdown code block formatting or explanation. Example format:
+Output ONLY a JSON array of objects with 'label', 'content', and optional 'differs_by' keys. Do not include markdown code block formatting or explanation. Example format:
 [
-  {{"label": "Candidate Name", "content": "..."}}
+  {{"label": "Candidate Name", "content": "...", "differs_by": "Refinement deepening top-performing attributes"}}
 ]
 """)
+        summary = f"Synthesized preference prompt for {count} candidates from {len(prefs['top_performers'])} winners, {len(prefs['bottom_performers'])} rejected items, and {len(prefs['notes'])} notes."
 
     full_prompt = "\n".join(prompt_lines).strip()
-    summary = f"Synthesized preferences from {len(prefs['top_performers'])} winners, {len(prefs['bottom_performers'])} rejected items, and {len(prefs['notes'])} user notes."
     return full_prompt, summary
 
 
-def _parse_candidates_json(raw_text: str, next_gen: int, backend_name: str) -> List[Candidate]:
-    """Parse JSON candidate list from model output, handling potential markdown wrappers."""
-    # Attempt to locate JSON array in response
+def _parse_candidates_json(
+    raw_text: str,
+    next_gen: int,
+    backend_name: str,
+    is_divergence: bool = False,
+    is_wildcard: bool = False,
+) -> List[Candidate]:
+    """Parse JSON candidate list from model output, handling potential markdown wrappers and metadata."""
     text = raw_text.strip()
     # Strip CLI preambles (e.g. omp 'Working...')
     if "Working..." in text:
@@ -191,18 +290,95 @@ def _parse_candidates_json(raw_text: str, next_gen: int, backend_name: str) -> L
         cid = f"gen{next_gen}_{uuid.uuid4().hex[:6]}"
         label = item.get("label") or f"Gen {next_gen} #{i+1}"
         content = item.get("content", "").strip()
+        differs_by = item.get("differs_by")
         if content:
+            meta: Dict[str, Any] = {
+                "lineage": "diverged" if is_divergence else "evolved",
+                "backend": backend_name,
+                "created_at": time.time(),
+            }
+            if differs_by:
+                meta["differs_by"] = differs_by
+            if is_wildcard:
+                meta["wildcard"] = True
+
             new_cands.append(
                 Candidate(
                     id=cid,
                     label=label,
                     content=content,
                     generation=next_gen,
-                    metadata={"lineage": "evolved", "backend": backend_name, "created_at": time.time()},
+                    metadata=meta,
                 )
             )
 
     return new_cands
+
+
+def call_generation_backend(prompt: str, backend: str) -> str:
+    """Execute LLM generation backend and return raw text output."""
+    if backend == "claude" and shutil.which("claude"):
+        res = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"Claude CLI failed: {res.stderr.strip()}")
+        return res.stdout.strip()
+
+    elif backend in ("omp", "homelab", "homelab-default") and shutil.which("omp"):
+        model_name = os.environ.get("SHOWDOWN_HOMELAB_MODEL", "homelab-default")
+        res = subprocess.run(
+            ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", prompt],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"OMP Homelab CLI failed: {res.stderr.strip()}")
+        return res.stdout.strip()
+
+    elif backend == "codex" and shutil.which("codex"):
+        res = subprocess.run(
+            ["codex", "exec", prompt],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"Codex CLI failed: {res.stderr.strip()}")
+        return res.stdout.strip()
+
+    elif backend == "openai":
+        import urllib.request
+
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        payload = {
+            "model": os.environ.get("SHOWDOWN_MODEL", "gpt-4o-mini"),
+            "messages": [
+                {"role": "system", "content": "You are a precise preference optimization assistant that outputs only valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.7,
+        }
+        req = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"].strip()
+
+    raise RuntimeError(
+        f"No suitable generation backend found for '{backend}'. Ensure 'claude', 'codex', or OPENAI_API_KEY is available."
+    )
 
 
 def execute_evolution(
@@ -210,9 +386,16 @@ def execute_evolution(
     count: int = 5,
     instructions: Optional[str] = None,
     backend: Optional[str] = "auto",
+    mode: str = "refine",
+    wildcards: Optional[int] = None,
+    chain_mode: Optional[str] = None,
+    storage: Optional[Storage] = None,
 ) -> EvolveResponse:
-    """Run candidate generation through available CLI or API backends."""
-    full_prompt, summary = build_evolution_prompt(tournament, count, instructions)
+    """Run candidate generation through available CLI or API backends with refine/diverge/hybrid support."""
+    # Resolve upstream context if parent stages exist
+    upstream_context = None
+    if storage:
+        upstream_context = resolve_upstream_context(tournament, storage)
 
     # Determine generation number
     existing_gens = [c.generation for c in tournament.candidates if hasattr(c, "generation")]
@@ -234,76 +417,103 @@ def execute_evolution(
         else:
             resolved_backend = "cli_fallback"
 
-    raw_output = ""
+    resolved_mode = mode.lower() if mode else "refine"
+    if resolved_mode not in ("refine", "diverge", "hybrid"):
+        resolved_mode = "refine"
 
-    if resolved_backend == "claude" and shutil.which("claude"):
-        res = subprocess.run(
-            ["claude", "-p", full_prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
+    if resolved_mode == "refine":
+        full_prompt, summary = build_evolution_prompt(
+            tournament=tournament,
+            count=count,
+            instructions=instructions,
+            mode="refine",
+            chain_mode=chain_mode,
+            upstream_context=upstream_context,
         )
-        if res.returncode != 0:
-            raise RuntimeError(f"Claude CLI failed: {res.stderr.strip()}")
-        raw_output = res.stdout.strip()
-
-    elif resolved_backend in ("omp", "homelab", "homelab-default") and shutil.which("omp"):
-        model_name = os.environ.get("SHOWDOWN_HOMELAB_MODEL", "homelab-default")
-        res = subprocess.run(
-            ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", full_prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"OMP Homelab CLI failed: {res.stderr.strip()}")
-        raw_output = res.stdout.strip()
-
-    elif resolved_backend == "codex" and shutil.which("codex"):
-        res = subprocess.run(
-            ["codex", "exec", full_prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"Codex CLI failed: {res.stderr.strip()}")
-        raw_output = res.stdout.strip()
-
-    elif resolved_backend == "openai":
-        import urllib.request
-
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        payload = {
-            "model": os.environ.get("SHOWDOWN_MODEL", "gpt-4o-mini"),
-            "messages": [
-                {"role": "system", "content": "You are a precise preference optimization assistant that outputs only valid JSON."},
-                {"role": "user", "content": full_prompt},
-            ],
-            "temperature": 0.7,
-        }
-        req = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            raw_output = data["choices"][0]["message"]["content"].strip()
-
-    else:
-        # Graceful fallback if no LLM executable is configured
-        raise RuntimeError(
-            f"No suitable generation backend found for '{resolved_backend}'. Ensure 'claude', 'codex', or OPENAI_API_KEY is available."
+        raw_output = call_generation_backend(full_prompt, resolved_backend)
+        new_cands = _parse_candidates_json(raw_output, next_gen, resolved_backend, is_divergence=False, is_wildcard=False)
+        return EvolveResponse(
+            prompt_used=full_prompt,
+            new_candidates=new_cands,
+            summary=f"{summary} Generated {len(new_cands)} refined candidates via {resolved_backend}.",
+            mode="refine",
+            refine_count=len(new_cands),
+            wildcard_count=0,
         )
 
-    new_candidates = _parse_candidates_json(raw_output, next_gen, resolved_backend)
-    return EvolveResponse(
-        prompt_used=full_prompt,
-        new_candidates=new_candidates,
-        summary=f"{summary} Generated {len(new_candidates)} new candidates via {resolved_backend}.",
-    )
+    elif resolved_mode == "diverge":
+        full_prompt, summary = build_evolution_prompt(
+            tournament=tournament,
+            count=count,
+            instructions=instructions,
+            mode="diverge",
+            chain_mode=chain_mode,
+            upstream_context=upstream_context,
+        )
+        raw_output = call_generation_backend(full_prompt, resolved_backend)
+        new_cands = _parse_candidates_json(raw_output, next_gen, resolved_backend, is_divergence=True, is_wildcard=True)
+        return EvolveResponse(
+            prompt_used=full_prompt,
+            new_candidates=new_cands,
+            summary=f"{summary} Generated {len(new_cands)} structural divergence wildcards via {resolved_backend}.",
+            mode="diverge",
+            refine_count=0,
+            wildcard_count=len(new_cands),
+        )
+
+    else:  # hybrid mode
+        if wildcards is not None:
+            w_count = min(max(1, wildcards), count)
+            r_count = count - w_count
+        else:
+            w_count = max(1, count // 3)
+            r_count = count - w_count
+
+        combined_cands: List[Candidate] = []
+        prompts: List[str] = []
+        summaries: List[str] = []
+        refine_actual = 0
+        wildcard_actual = 0
+
+        if r_count > 0:
+            r_prompt, r_sum = build_evolution_prompt(
+                tournament=tournament,
+                count=r_count,
+                instructions=instructions,
+                mode="refine",
+                chain_mode=chain_mode,
+                upstream_context=upstream_context,
+            )
+            prompts.append(f"[Refinement Prompt]:\n{r_prompt}")
+            r_raw = call_generation_backend(r_prompt, resolved_backend)
+            r_cands = _parse_candidates_json(r_raw, next_gen, resolved_backend, is_divergence=False, is_wildcard=False)
+            combined_cands.extend(r_cands)
+            refine_actual = len(r_cands)
+            summaries.append(f"{refine_actual} refinements")
+
+        if w_count > 0:
+            w_prompt, w_sum = build_evolution_prompt(
+                tournament=tournament,
+                count=w_count,
+                instructions=instructions,
+                mode="diverge",
+                chain_mode=chain_mode,
+                upstream_context=upstream_context,
+            )
+            prompts.append(f"[Divergence Wildcards Prompt]:\n{w_prompt}")
+            w_raw = call_generation_backend(w_prompt, resolved_backend)
+            w_cands = _parse_candidates_json(w_raw, next_gen, resolved_backend, is_divergence=True, is_wildcard=True)
+            combined_cands.extend(w_cands)
+            wildcard_actual = len(w_cands)
+            summaries.append(f"{wildcard_actual} wildcards")
+
+        full_prompt = "\n\n" + ("=" * 40) + "\n\n".join(prompts)
+        summary = f"Hybrid generation via {resolved_backend}: {', '.join(summaries)}."
+        return EvolveResponse(
+            prompt_used=full_prompt,
+            new_candidates=combined_cands,
+            summary=summary,
+            mode="hybrid",
+            refine_count=refine_actual,
+            wildcard_count=wildcard_actual,
+        )

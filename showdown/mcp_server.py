@@ -29,6 +29,7 @@ def showdown_create_tournament(
     tournament_id: Optional[str] = None,
     parent_ids: Optional[List[str]] = None,
     context: Optional[str] = None,
+    chain_mode: Optional[str] = "growth",
     blinded: bool = False,
     port: int = 8000,
 ) -> Dict[str, Any]:
@@ -43,6 +44,7 @@ def showdown_create_tournament(
         tournament_id: Optional custom slug or ID.
         parent_ids: Optional list of parent tournament IDs to chain sequential stages.
         context: Optional upstream context text from parent winners.
+        chain_mode: Chaining strategy: 'growth' (continuity) or 'divergence' (contrast).
         blinded: If True, mask candidate metadata to eliminate evaluation bias.
         port: Web server port for browser interaction URL (default 8000).
 
@@ -57,6 +59,7 @@ def showdown_create_tournament(
         tournament_id=tournament_id,
         parent_ids=parent_ids,
         context=context,
+        chain_mode=chain_mode,
         blinded=blinded,
     )
     return {
@@ -177,6 +180,9 @@ def showdown_evolve_candidates(
     tournament_id: str,
     count: int = 5,
     instructions: Optional[str] = None,
+    mode: str = "refine",
+    wildcards: Optional[int] = None,
+    chain_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Synthesize Generation N+1 candidate outputs based on human preference convergence.
@@ -185,20 +191,32 @@ def showdown_evolve_candidates(
         tournament_id: ID of the tournament.
         count: Number of mutated candidates to generate (default 5).
         instructions: Optional additional creative direction for mutation.
+        mode: Evolution mode: 'refine' (continuity/growth), 'diverge' (structural novelty), or 'hybrid' (split).
+        wildcards: Number of exploration wildcards if mode is 'hybrid'.
+        chain_mode: Chaining strategy override: 'growth' or 'divergence'.
 
     Returns:
-        List of newly generated candidates injected into the tournament pool.
+        List of newly generated candidates injected into the tournament pool with generation mode details.
     """
     from showdown.models import EvolveRequest
     res = evolve_tournament_endpoint(
         tournament_id=tournament_id,
-        req=EvolveRequest(count=count, instructions=instructions),
+        req=EvolveRequest(
+            count=count,
+            instructions=instructions,
+            mode=mode,
+            wildcards=wildcards,
+            chain_mode=chain_mode,
+        ),
     )
     return {
         "tournament_id": tournament_id,
         "new_candidates": [c.model_dump() for c in res.new_candidates],
         "prompt_used": res.prompt_used,
         "summary": res.summary,
+        "mode": res.mode,
+        "refine_count": res.refine_count,
+        "wildcard_count": res.wildcard_count,
     }
 
 

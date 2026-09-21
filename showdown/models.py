@@ -123,6 +123,7 @@ class Tournament(BaseModel):
     accepted_candidate_id: Optional[str] = None
     parent_ids: List[str] = Field(default_factory=list)
     context: Optional[str] = None
+    chain_mode: Optional[str] = "growth"  # "growth", "divergence"
     voters: List[str] = Field(default_factory=list)
     blinded: bool = False
     created_at: float = Field(default_factory=time.time)
@@ -137,6 +138,7 @@ class CreateTournamentRequest(BaseModel):
     candidates: List[Candidate]
     parent_ids: List[str] = Field(default_factory=list)
     context: Optional[str] = None
+    chain_mode: Optional[str] = "growth"
     blinded: bool = False
     overwrite: bool = False
 
@@ -163,12 +165,18 @@ class EvolveRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=20)
     instructions: Optional[str] = None
     backend: Optional[str] = "auto"  # "auto", "claude", "codex", "openai"
+    mode: str = "refine"  # "refine", "diverge", "hybrid"
+    wildcards: Optional[int] = None  # Number of exploration wildcards if mode is hybrid
+    chain_mode: Optional[str] = None  # Optional override ("growth", "divergence")
 
 
 class EvolveResponse(BaseModel):
     prompt_used: str
     new_candidates: List[Candidate]
     summary: str
+    mode: str = "refine"
+    refine_count: int = 0
+    wildcard_count: int = 0
 
 
 class AcceptCandidateRequest(BaseModel):

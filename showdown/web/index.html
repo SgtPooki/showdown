@@ -745,15 +745,27 @@
           <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">ADDITIONAL GUIDANCE (OPTIONAL)</label>
           <textarea id="evolve-instructions" rows="3" placeholder="e.g. Focus on punchy 3-word combinations with strong action verbs..." style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
         </div>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">COUNT:</label>
-            <input type="number" id="evolve-count" value="5" min="1" max="15" style="width: 60px; padding: 6px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
+        <div style="display: flex; gap: 12px; align-items: flex-end;">
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">MODE</label>
+            <select id="evolve-mode" onchange="onEvolveModeChange()" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;">
+              <option value="refine">Refine (Continuity &amp; Polish)</option>
+              <option value="diverge">Diverge (Structural Novelty)</option>
+              <option value="hybrid">Hybrid (Split Refine + Wildcards)</option>
+            </select>
           </div>
-          <div style="display: flex; gap: 10px;">
-            <button class="vote-btn vote-btn-secondary" onclick="closeEvolveModal()">Cancel</button>
-            <button class="vote-btn vote-btn-a" id="btn-run-evolve" onclick="triggerEvolution()">Run Generation</button>
+          <div id="box-evolve-wildcards" style="display: none; width: 105px; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">WILDCARDS</label>
+            <input type="number" id="evolve-wildcards" value="2" min="1" max="10" style="width: 100%; padding: 7px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
           </div>
+          <div style="width: 80px; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">COUNT</label>
+            <input type="number" id="evolve-count" value="5" min="1" max="15" style="width: 100%; padding: 7px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
+          </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;">
+          <button class="vote-btn vote-btn-secondary" onclick="closeEvolveModal()">Cancel</button>
+          <button class="vote-btn vote-btn-a" id="btn-run-evolve" onclick="triggerEvolution()">Run Generation</button>
         </div>
         <div id="evolve-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--brand-accent); min-height: 18px;"></div>
       </div>
@@ -773,16 +785,15 @@
           <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">UPSTREAM WINNER / CONTEXT</label>
           <textarea id="chain-upstream-content" rows="4" readonly style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 12px; font-family: 'JetBrains Mono', monospace; resize: vertical;"></textarea>
         </div>
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">NEW STAGE TITLE</label>
-          <input type="text" id="chain-title" placeholder="e.g. Act II: The Escalation" style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">NEW STAGE PROMPT</label>
-          <textarea id="chain-prompt" rows="3" placeholder="e.g. Continue the story directly following the events established in the upstream winner..." style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
-        </div>
-        <div style="display: flex; gap: 16px;">
+        <div style="display: flex; gap: 12px;">
           <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">CHAINING STRATEGY</label>
+            <select id="chain-strategy" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;">
+              <option value="growth">Growth (Continuity &amp; Deepening - build upon winner)</option>
+              <option value="divergence">Divergence (Contrast &amp; Exploration - explore alternative paradigms)</option>
+            </select>
+          </div>
+          <div style="width: 160px; display: flex; flex-direction: column; gap: 6px;">
             <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">TASK TYPE</label>
             <select id="chain-task-type" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;">
               <option value="text">Text / Markdown</option>
@@ -793,6 +804,14 @@
               <option value="trajectory">Agent Trajectory</option>
             </select>
           </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">NEW STAGE TITLE</label>
+          <input type="text" id="chain-title" placeholder="e.g. Act II: The Escalation" style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">NEW STAGE PROMPT</label>
+          <textarea id="chain-prompt" rows="3" placeholder="e.g. Continue the story directly following the events established in the upstream winner..." style="width: 100%; padding: 10px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical;"></textarea>
         </div>
         <div style="display: flex; flex-direction: column; gap: 6px;">
           <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">INITIAL CANDIDATES (ONE PER ENTRY, SEPARATED BY '---')</label>
@@ -1464,9 +1483,18 @@
       }
     }
 
+    function onEvolveModeChange() {
+      const mode = document.getElementById('evolve-mode').value;
+      const wildcardsBox = document.getElementById('box-evolve-wildcards');
+      if (wildcardsBox) {
+        wildcardsBox.style.display = mode === 'hybrid' ? 'flex' : 'none';
+      }
+    }
+
     function openEvolveModal() {
       document.getElementById('evolve-modal').style.display = 'flex';
       document.getElementById('evolve-status').textContent = '';
+      onEvolveModeChange();
     }
 
     function closeEvolveModal() {
@@ -1479,10 +1507,12 @@
       const statusEl = document.getElementById('evolve-status');
       const count = parseInt(document.getElementById('evolve-count').value, 10) || 5;
       const instructions = document.getElementById('evolve-instructions').value.trim() || null;
+      const mode = document.getElementById('evolve-mode').value || 'refine';
+      const wildcards = mode === 'hybrid' ? (parseInt(document.getElementById('evolve-wildcards').value, 10) || 2) : null;
 
       btn.disabled = true;
       btn.textContent = 'Generating...';
-      statusEl.textContent = 'Synthesizing preferences and generating candidates...';
+      statusEl.textContent = `Synthesizing ${mode} candidates...`;
 
       try {
         const res = await fetch(`/api/tournaments/${currentTournament.id}/evolve`, {
@@ -1491,7 +1521,9 @@
           body: JSON.stringify({
             count: count,
             instructions: instructions,
-            backend: 'auto'
+            backend: 'auto',
+            mode: mode,
+            wildcards: wildcards
           })
         });
 
@@ -1501,7 +1533,10 @@
         }
 
         const data = await res.json();
-        statusEl.textContent = `Success: Added ${data.new_candidates.length} new candidates!`;
+        const modeLabel = data.mode === 'hybrid'
+          ? `Hybrid (${data.refine_count} refined, ${data.wildcard_count} wildcards)`
+          : (data.mode === 'diverge' ? 'Divergence' : 'Refinement');
+        statusEl.textContent = `Success: Added ${data.new_candidates.length} candidates (${modeLabel})!`;
         await onTournamentChange(currentTournament.id);
         setTimeout(() => {
           closeEvolveModal();
@@ -1743,6 +1778,17 @@
         }
 
         const displayLabel = blindMode ? `Candidate #${currentRank} (Masked)` : (item.candidate.label || item.candidate.id);
+        let badgeHtml = '';
+        if (!blindMode && item.candidate.metadata) {
+          if (item.candidate.metadata.wildcard || item.candidate.metadata.lineage === 'diverged') {
+            const differs = item.candidate.metadata.differs_by ? ` title="${item.candidate.metadata.differs_by.replace(/"/g, '&quot;')}"` : '';
+            badgeHtml = `<span style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace; cursor: help;"${differs}>🎲 Wildcard</span>`;
+          } else if (item.candidate.metadata.lineage === 'evolved') {
+            const differs = item.candidate.metadata.differs_by ? ` title="${item.candidate.metadata.differs_by.replace(/"/g, '&quot;')}"` : '';
+            badgeHtml = `<span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace; cursor: help;"${differs}>🧬 Evolved</span>`;
+          }
+        }
+
         const tr = document.createElement('tr');
 
         let eloContent = `<span class="elo-pill">${Math.round(item.stat.elo)}</span>`;
@@ -1759,7 +1805,7 @@
 
         tr.innerHTML = `
           <td><strong>#${currentRank}</strong></td>
-          <td id="cell-cand-${item.candidate.id}" style="display:flex; align-items:center;"><span>${displayLabel}</span></td>
+          <td id="cell-cand-${item.candidate.id}" style="display:flex; align-items:center;"><span>${displayLabel}</span>${badgeHtml}</td>
           <td>${eloContent}</td>
           <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
           <td>${item.winRate}%</td>
@@ -1846,7 +1892,8 @@
 
       btn.disabled = true;
       btn.textContent = 'Creating Stage...';
-      statusEl.textContent = 'Launching sequential tournament stage...';
+      const chainStrategyEl = document.getElementById('chain-strategy');
+      const chainStrategy = chainStrategyEl ? chainStrategyEl.value : 'growth';
 
       try {
         const payload = {
@@ -1855,7 +1902,8 @@
           task_type: taskType,
           candidates: parsedCandidates,
           parent_ids: [currentTournament.id],
-          context: context
+          context: context,
+          chain_mode: chainStrategy
         };
         const res = await fetch('/api/tournaments', {
           method: 'POST',
