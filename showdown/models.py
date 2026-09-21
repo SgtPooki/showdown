@@ -62,6 +62,10 @@ class CandidateStats(BaseModel):
     losses: int = 0
     ties: int = 0
     matches: int = 0
+    bt_elo: Optional[float] = None
+    bt_uncertainty: Optional[float] = None
+    bt_ci_lower: Optional[float] = None
+    bt_ci_upper: Optional[float] = None
 
 
 class Tournament(BaseModel):

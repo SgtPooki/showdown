@@ -328,7 +328,7 @@ def showdown_run_judge(
         rubric: Optional custom evaluation criteria or guidelines.
         swap_positions: Whether to evaluate both A vs B and B vs A to mitigate position bias (default True).
         voter: Custom evaluator identifier tag (defaults to judge:<backend>).
-        mode: Matchup selection strategy ('active', 'controversial', 'close').
+        mode: Matchup selection strategy ('active', 'info_gain', 'controversial', 'close').
         stop_on_convergence: If True, halts evaluation early once the top candidate statistically separates.
 
     Returns:

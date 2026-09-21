@@ -15,9 +15,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from showdown.engine import (
+    apply_bradley_terry_stats,
     check_convergence,
     compute_inter_annotator_agreement,
     compute_voter_consistency,
+    fit_bradley_terry,
     get_dynamic_k_factor,
     replay_stats,
     select_matchup,
@@ -105,6 +107,8 @@ def create_tournament(req: CreateTournamentRequest):
     for c in tournament.candidates:
         tournament.stats[c.id] = CandidateStats()
 
+    apply_bradley_terry_stats(tournament.candidates, tournament.matches, tournament.stats)
+
     with storage.lock_tournament(t_id):
         storage.save_tournament(tournament)
     return tournament
@@ -122,6 +126,8 @@ def get_tournament(tournament_id: str, voter: Optional[str] = None):
     # If a specific evaluator is requested, replay ratings for that evaluator on the fly
     if voter and voter.strip().lower() not in ("all", "pooled", "*"):
         tournament.stats = replay_stats(tournament.candidates, tournament.matches, voter=voter.strip())
+    elif any(s.bt_elo is None for s in tournament.stats.values()):
+        apply_bradley_terry_stats(tournament.candidates, tournament.matches, tournament.stats)
 
     return tournament
 
@@ -140,12 +146,15 @@ def get_matchup(
     tournament_id: str,
     mode: str = "active",
 ):
-    if mode not in ("active", "controversial", "close"):
-        raise HTTPException(status_code=400, detail=f"Invalid matchup mode '{mode}'. Must be 'active', 'controversial', or 'close'.")
+    if mode not in ("active", "controversial", "close", "info_gain"):
+        raise HTTPException(status_code=400, detail=f"Invalid matchup mode '{mode}'. Must be 'active', 'controversial', 'close', or 'info_gain'.")
 
     tournament = storage.load_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+
+    if any(s.bt_elo is None for s in tournament.stats.values()):
+        apply_bradley_terry_stats(tournament.candidates, tournament.matches, tournament.stats)
 
     pair = select_matchup(tournament, mode=mode)
     if not pair:
@@ -229,6 +238,9 @@ def record_vote(tournament_id: str, vote: VoteRequest):
         )
         tournament.matches.append(match_record)
         tournament.updated_at = time.time()
+
+        # Update Bradley-Terry parameters across matches
+        apply_bradley_terry_stats(tournament.candidates, tournament.matches, tournament.stats)
 
         storage.save_tournament(tournament)
 
@@ -344,6 +356,8 @@ def add_candidates(tournament_id: str, req: AddCandidatesRequest):
                 continue
             tournament.candidates.append(c)
             tournament.stats[c.id] = CandidateStats()
+
+        apply_bradley_terry_stats(tournament.candidates, tournament.matches, tournament.stats)
 
         tournament.updated_at = time.time()
         storage.save_tournament(tournament)

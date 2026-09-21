@@ -452,6 +452,7 @@
             <label for="matchup-routing-select" style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-tertiary);">ROUTING:</label>
             <select id="matchup-routing-select" onchange="onRoutingModeChanged(this.value)" style="background: var(--bg-canvas); border: 1px solid var(--border-subtle); color: var(--text-secondary); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 11px; font-family: 'JetBrains Mono', monospace; cursor: pointer;">
               <option value="active">Active (Balanced)</option>
+              <option value="info_gain">Active Info-Gain (MLE)</option>
               <option value="controversial">Controversial / Biased</option>
               <option value="close">Close Elo Triage</option>
             </select>
@@ -551,7 +552,7 @@
           <tr>
             <th>Rank</th>
             <th>Candidate</th>
-            <th>Elo Rating</th>
+            <th>Elo (Bradley-Terry ±σ)</th>
             <th>Record (W-L-T)</th>
             <th>Win Rate</th>
             <th>Matches</th>
@@ -1289,12 +1290,15 @@
           .catch(() => { consistencyPill.style.display = 'none'; });
       }
 
+      // Helper function to resolve displayed rating
+      const getDisplayedRating = (s) => (s && s.bt_elo !== null && s.bt_elo !== undefined) ? s.bt_elo : (s ? s.elo : 1200);
+
       // Calculate pooled ranks for delta calculation
       const pooledItems = pooledTourney.candidates.map(c => {
         const stat = pooledTourney.stats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
-        return { id: c.id, elo: stat.elo };
+        return { id: c.id, rating: getDisplayedRating(stat) };
       });
-      pooledItems.sort((a, b) => b.elo - a.elo);
+      pooledItems.sort((a, b) => b.rating - a.rating);
       const pooledRankMap = {};
       pooledItems.forEach((item, index) => {
         pooledRankMap[item.id] = index + 1;
@@ -1321,10 +1325,10 @@
       const items = pooledTourney.candidates.map(c => {
         const stat = activeStats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
         const winRate = stat.matches > 0 ? Math.round((stat.wins / stat.matches) * 100) : 0;
-        return { candidate: c, stat, winRate };
+        return { candidate: c, stat, winRate, rating: getDisplayedRating(stat) };
       });
 
-      items.sort((a, b) => b.stat.elo - a.stat.elo);
+      items.sort((a, b) => b.rating - a.rating);
 
       items.forEach((item, idx) => {
         const currentRank = idx + 1;
@@ -1357,10 +1361,23 @@
 
         const displayLabel = blindMode ? `Candidate #${currentRank} (Masked)` : (item.candidate.label || item.candidate.id);
         const tr = document.createElement('tr');
+
+        let eloContent = `<span class="elo-pill">${Math.round(item.stat.elo)}</span>`;
+        if (item.stat.bt_elo !== null && item.stat.bt_elo !== undefined && item.stat.bt_uncertainty !== null && item.stat.bt_uncertainty !== undefined) {
+          const ciLower = Math.round(item.stat.bt_ci_lower !== null && item.stat.bt_ci_lower !== undefined ? item.stat.bt_ci_lower : item.stat.bt_elo - (1.96 * item.stat.bt_uncertainty));
+          const ciUpper = Math.round(item.stat.bt_ci_upper !== null && item.stat.bt_ci_upper !== undefined ? item.stat.bt_ci_upper : item.stat.bt_elo + (1.96 * item.stat.bt_uncertainty));
+          eloContent = `
+            <div style="display: inline-flex; align-items: baseline; gap: 5px;">
+              <span class="elo-pill">${Math.round(item.stat.bt_elo)}</span>
+              <span style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-tertiary); cursor: help;" title="95% Confidence Interval: [${ciLower}, ${ciUpper}]">±${Math.round(item.stat.bt_uncertainty)}</span>
+            </div>
+          `;
+        }
+
         tr.innerHTML = `
           <td><strong>#${currentRank}</strong></td>
           <td id="cell-cand-${item.candidate.id}" style="display:flex; align-items:center;"><span>${displayLabel}</span></td>
-          <td><span class="elo-pill">${Math.round(item.stat.elo)}</span></td>
+          <td>${eloContent}</td>
           <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
           <td>${item.winRate}%</td>
           <td>${item.stat.matches}</td>

@@ -272,7 +272,7 @@ def judge(
     rubric: Optional[Path] = typer.Option(None, "--rubric", help="Optional file path or custom rubric criteria"),
     swap: bool = typer.Option(True, "--swap/--no-swap", help="Mitigate position bias by evaluating swapped pairs"),
     voter: Optional[str] = typer.Option(None, "--voter", "-v", help="Custom voter identifier (defaults to judge:<backend>)"),
-    mode: str = typer.Option("active", "--mode", "-m", help="Matchup selection strategy: 'active', 'controversial', or 'close'"),
+    mode: str = typer.Option("active", "--mode", "-m", help="Matchup selection strategy: 'active', 'info_gain', 'controversial', or 'close'"),
     stop_on_convergence: bool = typer.Option(False, "--stop-on-convergence", help="Stop evaluation early if tournament converges"),
 ):
     """Run automated LLM-as-a-judge tournament rounds with position-bias mitigation."""

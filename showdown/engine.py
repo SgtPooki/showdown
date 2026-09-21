@@ -110,6 +110,50 @@ def select_matchup(
                 return c_a, c_b
             return c_b, c_a
 
+    if mode == "info_gain":
+        # Bradley-Terry active information-gain matchmaking.
+        # Selects candidate pairs that maximize expected variance reduction,
+        # weighted toward top-performing candidates to resolve the winner faster.
+        best_gain = -1e9
+        best_pair = None
+
+        mean_elo = sum(tournament.stats.get(c.id, CandidateStats()).elo for c in candidates) / len(candidates)
+
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                c1 = candidates[i]
+                c2 = candidates[j]
+                s1 = tournament.stats.get(c1.id, CandidateStats())
+                s2 = tournament.stats.get(c2.id, CandidateStats())
+
+                prior_se = (400.0 / math.log(10.0)) * 2.0
+                u1 = s1.bt_uncertainty if s1.bt_uncertainty is not None else prior_se / math.sqrt(max(1, s1.matches + 1))
+                u2 = s2.bt_uncertainty if s2.bt_uncertainty is not None else prior_se / math.sqrt(max(1, s2.matches + 1))
+                joint_uncertainty = math.sqrt(u1 * u1 + u2 * u2)
+
+                r1 = s1.bt_elo if s1.bt_elo is not None else s1.elo
+                r2 = s2.bt_elo if s2.bt_elo is not None else s2.elo
+                diff = abs(r1 - r2)
+                closeness_factor = 1.0 / (1.0 + (diff / 200.0))
+
+                avg_rating = (r1 + r2) / 2.0
+                relevance = 1.0 + max(0.0, (avg_rating - mean_elo) / 200.0)
+
+                pair_key = tuple(sorted([c1.id, c2.id]))
+                prior = pair_counts.get(pair_key, 0)
+                repetition_penalty = prior * 30.0
+
+                gain = (joint_uncertainty * closeness_factor * relevance) - repetition_penalty
+                if gain > best_gain:
+                    best_gain = gain
+                    best_pair = (c1, c2)
+
+        if best_pair:
+            c_a, c_b = best_pair
+            if random.random() > 0.5:
+                return c_a, c_b
+            return c_b, c_a
+
     # Standard active selection
     def get_matches(c: Candidate) -> int:
         stat = tournament.stats.get(c.id)
@@ -146,6 +190,179 @@ def select_matchup(
     if random.random() > 0.5:
         return candidate_a, candidate_b
     return candidate_b, candidate_a
+
+
+def _invert_matrix(matrix: List[List[float]]) -> List[List[float]]:
+    """Invert an n x n symmetric positive-definite matrix via Gauss-Jordan elimination with partial pivoting."""
+    n = len(matrix)
+    if n == 0:
+        return []
+    if n == 1:
+        val = matrix[0][0]
+        return [[1.0 / max(1e-9, val)]]
+
+    aug = [row[:] + [1.0 if i == j else 0.0 for j in range(n)] for i, row in enumerate(matrix)]
+
+    for i in range(n):
+        pivot_row = i
+        max_val = abs(aug[i][i])
+        for r in range(i + 1, n):
+            if abs(aug[r][i]) > max_val:
+                max_val = abs(aug[r][i])
+                pivot_row = r
+
+        if pivot_row != i:
+            aug[i], aug[pivot_row] = aug[pivot_row], aug[i]
+
+        pivot = aug[i][i]
+        if abs(pivot) < 1e-9:
+            pivot = 1e-9 if pivot >= 0 else -1e-9
+
+        for c in range(2 * n):
+            aug[i][c] /= pivot
+
+        for r in range(n):
+            if r != i:
+                factor = aug[r][i]
+                for c in range(2 * n):
+                    aug[r][c] -= factor * aug[i][c]
+
+    return [row[n:] for row in aug]
+
+
+def fit_bradley_terry(
+    candidates: List[Candidate],
+    matches: List[Match],
+    prior_weight: float = 1.0,
+    max_iter: int = 100,
+    tol: float = 1e-6,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Fit Bradley-Terry latent strength parameters via Minorization-Maximization (MM)
+    with Laplace/Bayesian regularization to eliminate presentation order bias
+    and produce calibrated standard errors (confidence bands).
+    """
+    n = len(candidates)
+    if n == 0:
+        return {}
+    if n == 1:
+        return {
+            candidates[0].id: {
+                "bt_elo": DEFAULT_ELO,
+                "bt_uncertainty": 0.0,
+                "bt_ci_lower": DEFAULT_ELO,
+                "bt_ci_upper": DEFAULT_ELO,
+            }
+        }
+
+    cand_indices = {c.id: i for i, c in enumerate(candidates)}
+
+    # Accumulate wins W_i and match counts N_ij
+    w = [0.0] * n
+    n_matrix = [[0 for _ in range(n)] for _ in range(n)]
+
+    for m in matches:
+        if m.id_a not in cand_indices or m.id_b not in cand_indices:
+            continue
+        i = cand_indices[m.id_a]
+        j = cand_indices[m.id_b]
+        if i == j:
+            continue
+
+        if m.winner == "a":
+            w[i] += 1.0
+            n_matrix[i][j] += 1
+            n_matrix[j][i] += 1
+        elif m.winner == "b":
+            w[j] += 1.0
+            n_matrix[i][j] += 1
+            n_matrix[j][i] += 1
+        elif m.winner == "tie":
+            w[i] += 0.5
+            w[j] += 0.5
+            n_matrix[i][j] += 1
+            n_matrix[j][i] += 1
+
+    # Minorization-Maximization (MM) algorithm for Bradley-Terry
+    p = [1.0] * n
+
+    for _ in range(max_iter):
+        p_next = [0.0] * n
+        for i in range(n):
+            denom = 0.0
+            for j in range(n):
+                if i != j and n_matrix[i][j] > 0:
+                    denom += n_matrix[i][j] / (p[i] + p[j])
+            denom += prior_weight / (p[i] + 1.0)
+            p_next[i] = (w[i] + (0.5 * prior_weight)) / denom
+
+        max_diff = max(abs(p_next[i] - p[i]) for i in range(n))
+        p = p_next
+        if max_diff < tol:
+            break
+
+    scale = 400.0 / math.log(10.0)
+    beta = [math.log(max(1e-12, val)) for val in p]
+
+    # Compute Fisher Information Matrix for standard error estimation
+    info_matrix = [[0.0] * n for _ in range(n)]
+    ridge_lambda = 1e-4
+
+    for i in range(n):
+        diag = ridge_lambda + (prior_weight * p[i] / math.pow(p[i] + 1.0, 2))
+        for j in range(n):
+            if i != j:
+                if n_matrix[i][j] > 0:
+                    val = n_matrix[i][j] * (p[i] * p[j]) / math.pow(p[i] + p[j], 2)
+                    diag += val
+                    info_matrix[i][j] = -val
+                else:
+                    info_matrix[i][j] = 0.0
+        info_matrix[i][i] = diag
+
+    cov_matrix = _invert_matrix(info_matrix)
+
+    out: Dict[str, Dict[str, float]] = {}
+    for c in candidates:
+        idx = cand_indices[c.id]
+        bt_elo = round(DEFAULT_ELO + (beta[idx] * scale), 2)
+        var_beta = max(1e-4, cov_matrix[idx][idx])
+        se_elo = round(math.sqrt(var_beta) * scale, 2)
+        ci_lower = round(bt_elo - (1.96 * se_elo), 2)
+        ci_upper = round(bt_elo + (1.96 * se_elo), 2)
+
+        out[c.id] = {
+            "bt_elo": bt_elo,
+            "bt_uncertainty": se_elo,
+            "bt_ci_lower": ci_lower,
+            "bt_ci_upper": ci_upper,
+        }
+
+    return out
+
+
+def apply_bradley_terry_stats(
+    candidates: List[Candidate],
+    matches: List[Match],
+    stats: Dict[str, CandidateStats],
+) -> None:
+    """Populate Bradley-Terry MLE parameters and calibrated uncertainty intervals into stats."""
+    if matches:
+        bt_results = fit_bradley_terry(candidates, matches)
+        for cid, b_data in bt_results.items():
+            if cid in stats:
+                stats[cid].bt_elo = b_data["bt_elo"]
+                stats[cid].bt_uncertainty = b_data["bt_uncertainty"]
+                stats[cid].bt_ci_lower = b_data["bt_ci_lower"]
+                stats[cid].bt_ci_upper = b_data["bt_ci_upper"]
+    else:
+        scale = 400.0 / math.log(10.0)
+        prior_se = round(scale * 2.0, 2)
+        for cid in stats:
+            stats[cid].bt_elo = DEFAULT_ELO
+            stats[cid].bt_uncertainty = prior_se
+            stats[cid].bt_ci_lower = round(DEFAULT_ELO - (1.96 * prior_se), 2)
+            stats[cid].bt_ci_upper = round(DEFAULT_ELO + (1.96 * prior_se), 2)
 
 
 def replay_stats(
@@ -208,6 +425,9 @@ def replay_stats(
         stat_a.elo = elo_a_after
         stat_b.elo = elo_b_after
 
+    # Compute Bradley-Terry MLE latent parameters & uncertainty intervals
+    apply_bradley_terry_stats(candidates, filtered_matches, stats)
+
     return stats
 
 
@@ -216,22 +436,53 @@ def check_convergence(
     stats: Dict[str, CandidateStats],
     min_matches_per_cand: int = 2,
     lead_margin: float = 35.0,
+    z_threshold: float = 1.645,
 ) -> Tuple[bool, float]:
     """
     Check if a tournament's top candidate is statistically separated.
+    Uses Bayesian Bradley-Terry confidence intervals (z-score >= 1.645 for 95% one-sided confidence)
+    or standard Elo point margin separation.
     Returns (is_converged, confidence_score_0_to_1).
     """
     if len(candidates) < 2:
         return True, 1.0
 
-    sorted_stats = sorted([stats.get(c.id, CandidateStats()) for c in candidates], key=lambda s: s.elo, reverse=True)
+    has_bt = any(stats.get(c.id, CandidateStats()).bt_elo is not None for c in candidates)
+    if has_bt:
+        sorted_stats = sorted(
+            [stats.get(c.id, CandidateStats()) for c in candidates],
+            key=lambda s: s.bt_elo if s.bt_elo is not None else s.elo,
+            reverse=True,
+        )
+    else:
+        sorted_stats = sorted([stats.get(c.id, CandidateStats()) for c in candidates], key=lambda s: s.elo, reverse=True)
+
     min_played = min(s.matches for s in sorted_stats)
     if min_played < min_matches_per_cand:
         progress = min(1.0, sum(s.matches for s in sorted_stats) / max(1, len(candidates) * min_matches_per_cand))
         return False, round(progress * 0.5, 2)
 
-    top_elo = sorted_stats[0].elo
-    second_elo = sorted_stats[1].elo
+    top = sorted_stats[0]
+    second = sorted_stats[1]
+
+    # If Bradley-Terry ratings and uncertainties are available, calculate exact z-score separation
+    if (
+        top.bt_elo is not None
+        and second.bt_elo is not None
+        and top.bt_uncertainty is not None
+        and second.bt_uncertainty is not None
+    ):
+        diff = top.bt_elo - second.bt_elo
+        pooled_se = math.sqrt(math.pow(top.bt_uncertainty, 2) + math.pow(second.bt_uncertainty, 2))
+        z = diff / max(1e-4, pooled_se)
+        # Normal CDF: 0.5 * (1 + erf(z / sqrt(2)))
+        confidence = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+        confidence = min(1.0, max(0.0, confidence))
+        is_converged = z >= z_threshold and min_played >= min_matches_per_cand
+        return is_converged, round(confidence, 2)
+
+    top_elo = top.elo
+    second_elo = second.elo
     margin = top_elo - second_elo
 
     confidence = min(1.0, max(0.0, margin / lead_margin))
