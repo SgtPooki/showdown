@@ -254,6 +254,16 @@ def install_skill(
     console.print("[bold cyan]Showdown skill ready for agent invocation via /showdown![/bold cyan]")
 
 
+@app.command()
+def mcp(
+    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport protocol ('stdio', 'sse')"),
+    data_dir: Optional[str] = typer.Option(None, "--data-dir", "-d", help="Custom storage directory"),
+):
+    """Run the Showdown Model Context Protocol (MCP) server for agent IDE and CLI integration."""
+    from showdown.mcp_server import run_mcp_server
+    run_mcp_server(transport=transport, data_dir=data_dir)
+
+
 if __name__ == "__main__":
     app()
 

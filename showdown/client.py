@@ -20,6 +20,8 @@ def create_tournament(
     prompt: Optional[str] = None,
     task_type: Union[str, TaskType] = "text",
     tournament_id: Optional[str] = None,
+    parent_ids: Optional[List[str]] = None,
+    context: Optional[str] = None,
     data_dir: Optional[str] = None,
     overwrite: bool = False,
 ) -> Tournament:
@@ -31,8 +33,10 @@ def create_tournament(
         candidates: List of dicts with 'id', 'content', and optional 'label'/'metadata'.
         items: Alias for 'candidates' to support Universal Skills standard.
         prompt: The evaluation prompt or goal given to the LLMs/generators.
-        task_type: 'text', 'markdown', 'code', 'diff', 'image', or 'json'.
+        task_type: 'text', 'markdown', 'code', 'diff', 'image', 'svg', or 'json'.
         tournament_id: Optional custom slug/id.
+        parent_ids: Optional parent tournament IDs to chain from.
+        context: Optional context text from upstream tournaments.
         data_dir: Optional custom data storage directory.
         overwrite: If True, overwrite existing tournament with the same ID.
 
@@ -61,6 +65,8 @@ def create_tournament(
         prompt=prompt,
         task_type=resolved_task_type,
         candidates=parsed_candidates,
+        parent_ids=parent_ids or [],
+        context=context,
         overwrite=overwrite,
     )
 
