@@ -51,6 +51,7 @@ from showdown.models import (
     JudgeResponse,
     ProviderInfo,
     ProviderLeaderboardEntry,
+    SimulationRequest,
     StepAnnotation,
     StepAnnotationRequest,
     StepAnnotationTag,
@@ -959,5 +960,41 @@ async def evolve_tournament_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/simulations")
+def run_simulation_endpoint(req: SimulationRequest):
+    """Run an automated multi-generational self-play, logo arena, or chained narrative simulation."""
+    from showdown.simulate import SimulationHarness
+    harness = SimulationHarness(storage=storage)
+
+    if req.scenario == "generational":
+        return harness.run_generational_simulation(
+            generations=req.generations,
+            candidates_per_gen=req.candidates_per_gen,
+            judge_backend=req.judge_backend,
+            generation_backend=req.generation_backend,
+            generation_providers=req.generation_providers,
+            evolution_mode=req.evolution_mode,
+            wildcards=req.wildcards,
+            prompt=req.prompt or "Generate punchy brand slogans for developer tools",
+        )
+    elif req.scenario == "logo":
+        return harness.run_logo_arena_simulation(
+            company_name=req.company or "Apex Systems",
+            judge_backend=req.judge_backend,
+        )
+    elif req.scenario == "chained":
+        return harness.run_chained_narrative_simulation(
+            project_title=req.company or "Distributed Runtime Spec",
+            judge_backend=req.judge_backend,
+            generation_backend=req.generation_backend,
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown simulation scenario '{req.scenario}'. Must be 'generational', 'logo', or 'chained'.",
+        )
+
 
 

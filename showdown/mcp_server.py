@@ -528,6 +528,58 @@ def showdown_get_provider_leaderboard() -> Dict[str, Any]:
     }
 
 
+@server.tool()
+def showdown_run_simulation(
+    scenario: str = "generational",
+    generations: int = 3,
+    candidates_per_gen: int = 4,
+    judge_backend: str = "auto",
+    generation_backend: str = "auto",
+    prompt: Optional[str] = None,
+    company: Optional[str] = "Apex Systems",
+) -> Dict[str, Any]:
+    """
+    Run an automated simulation (multi-generational evolution, logo arena, or chained narrative).
+
+    Args:
+        scenario: 'generational', 'logo', or 'chained'.
+        generations: Number of generations to evolve (default 3).
+        candidates_per_gen: Candidates per generation (default 4).
+        judge_backend: LLM judge backend ('auto', 'claude', 'codex', 'omp').
+        generation_backend: LLM generation backend.
+        prompt: Optional task prompt.
+        company: Company name for logo arena or narrative.
+
+    Returns:
+        Simulation results with generational progression, win rates, and objective convergence proof.
+    """
+    from showdown.simulate import SimulationHarness
+    from showdown.storage import Storage
+
+    harness = SimulationHarness(storage=Storage())
+    if scenario == "generational":
+        return harness.run_generational_simulation(
+            generations=generations,
+            candidates_per_gen=candidates_per_gen,
+            judge_backend=judge_backend,
+            generation_backend=generation_backend,
+            prompt=prompt or "Generate punchy brand slogans for developer tools",
+        )
+    elif scenario == "logo":
+        return harness.run_logo_arena_simulation(
+            company_name=company or "Apex Systems",
+            judge_backend=judge_backend,
+        )
+    elif scenario == "chained":
+        return harness.run_chained_narrative_simulation(
+            project_title=company or "Distributed Runtime Spec",
+            judge_backend=judge_backend,
+            generation_backend=generation_backend,
+        )
+    else:
+        return {"error": f"Unknown scenario '{scenario}'. Choose 'generational', 'logo', or 'chained'."}
+
+
 def run_mcp_server(transport: str = "stdio", data_dir: Optional[str] = None) -> None:
     """Run the Showdown MCP server."""
     if data_dir:

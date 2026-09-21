@@ -170,7 +170,12 @@ class MockProvider(AgentProvider):
         return True
 
     def generate(self, prompt: str, timeout: int = 120) -> str:
-        if "winner" in prompt.lower() or "judge" in prompt.lower():
+        prompt_lower = prompt.lower()
+        if "json array" in prompt_lower or "generate exactly" in prompt_lower or "candidate variations" in prompt_lower:
+            return json.dumps([
+                {"label": "Mock Candidate", "content": "Mock generated candidate content.", "differs_by": "Mock variation"}
+            ])
+        if "winner" in prompt_lower or "judge" in prompt_lower or "candidate a:" in prompt_lower:
             return json.dumps({"winner": "a", "critique": "Mock judge preference."})
         return json.dumps([
             {"label": "Mock Candidate", "content": "Mock generated candidate content.", "differs_by": "Mock variation"}

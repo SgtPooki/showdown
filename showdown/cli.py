@@ -510,6 +510,95 @@ def leaderboard():
     console.print(table)
 
 
+@app.command()
+def simulate(
+    scenario: str = typer.Option("generational", "--scenario", "-s", help="Simulation scenario: 'generational', 'logo', or 'chained'"),
+    generations: int = typer.Option(3, "--generations", "-g", help="Number of evolutionary generations"),
+    candidates: int = typer.Option(4, "--candidates", "-c", help="Candidates per generation"),
+    judge: str = typer.Option("auto", "--judge", "-j", help="Judge backend ('auto', 'claude', 'codex', 'omp', 'openai')"),
+    generator: str = typer.Option("auto", "--generator", "-G", help="Generation backend"),
+    provider: Optional[List[str]] = typer.Option(None, "--provider", "-P", help="Specific provider(s) for multi-agent fan-out"),
+    mode: str = typer.Option("hybrid", "--mode", "-m", help="Evolution mode: 'refine', 'diverge', or 'hybrid'"),
+    company: str = typer.Option("Apex Systems", "--company", help="Company name for logo/narrative arena"),
+    prompt: Optional[str] = typer.Option(None, "--prompt", help="Custom task prompt"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Save simulation results JSON to file"),
+):
+    """Run automated multi-generational self-play, logo arena, or chained narrative simulations."""
+    from showdown.simulate import SimulationHarness
+    harness = SimulationHarness()
+
+    console.print(f"[bold cyan]Starting Showdown Simulation Harness (scenario: {scenario})...[/bold cyan]")
+
+    if scenario == "generational":
+        task_prompt = prompt or "Generate punchy brand slogans for developer tools"
+        res = harness.run_generational_simulation(
+            generations=generations,
+            candidates_per_gen=candidates,
+            judge_backend=judge,
+            generation_backend=generator,
+            generation_providers=provider,
+            evolution_mode=mode,
+            prompt=task_prompt,
+        )
+
+        console.print(f"[bold green]Generational Simulation Complete![/bold green] Tournament: [cyan]{res['tournament_id']}[/cyan]")
+        console.print(f"Total candidates evolved: [bold]{res['total_candidates']}[/bold] across {res['generations_run']} generations.")
+
+        table = Table(title="Generational Progression & Convergence")
+        table.add_column("Gen", justify="center", style="cyan")
+        table.add_column("Candidates", justify="right")
+        table.add_column("Avg Elo", justify="right", style="yellow")
+        table.add_column("Top Contender", style="white")
+        table.add_column("Top Elo", justify="right", style="bold green")
+
+        for g in res["generation_history"]:
+            top = g["top_candidate"]
+            top_label = f"{top['label']} ({top['provider'] or 'seed'})" if top["label"] else "-"
+            table.add_row(
+                str(g["generation"]),
+                str(g["candidate_count"]),
+                f"{g['average_elo']:.1f}",
+                top_label,
+                f"{top['elo']:.1f}",
+            )
+        console.print(table)
+
+        vb = res["validation_battle"]
+        console.print("\n[bold magenta]Final Validation Battle (Gen N vs Gen 1 Baseline):[/bold magenta]")
+        console.print(f"Matches: {vb['matches_played']} | Gen N Wins: [bold green]{vb['gen_n_wins']}[/bold green] | Gen 1 Wins: [bold red]{vb['gen_1_wins']}[/bold red] | Ties: {vb['ties']}")
+        console.print(f"Gen N Win Rate: [bold yellow]{vb['gen_n_win_rate_pct']}%[/bold yellow]")
+        if vb["objective_convergence_proven"]:
+            console.print("[bold green]✓ Objective convergence proven: Gen N outperformed Gen 1 baseline![/bold green]")
+        else:
+            console.print("[yellow]Convergence inconclusive or baseline retained parity.[/yellow]")
+
+    elif scenario == "logo":
+        res = harness.run_logo_arena_simulation(
+            company_name=company,
+            judge_backend=judge,
+        )
+        console.print(f"[bold green]Logo Arena Simulation Complete![/bold green] Tournament: [cyan]{res['tournament_id']}[/cyan]")
+        winner = res["winning_logo"]
+        console.print(f"Winning vector logo: [bold cyan]{winner['label']}[/bold cyan] (Elo: {winner['elo']})")
+
+    elif scenario == "chained":
+        res = harness.run_chained_narrative_simulation(
+            project_title=company,
+            judge_backend=judge,
+            generation_backend=generator,
+        )
+        console.print(f"[bold green]Chained Narrative Simulation Complete![/bold green] Completed {res['stages_completed']} stages.")
+        console.print(f"Compiled Document:\n[dim]{res['full_text'][:300]}...[/dim]")
+
+    else:
+        console.print(f"[red]Error: Unknown scenario '{scenario}'. Choose 'generational', 'logo', or 'chained'.[/red]")
+        raise typer.Exit(code=1)
+
+    if output:
+        output.write_text(json.dumps(res, indent=2))
+        console.print(f"[green]Simulation report written to {output}[/green]")
+
+
 if __name__ == "__main__":
     app()
 

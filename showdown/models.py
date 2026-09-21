@@ -202,6 +202,19 @@ class ProviderLeaderboardEntry(BaseModel):
     candidates_count: int
 
 
+class SimulationRequest(BaseModel):
+    scenario: str = "generational"  # "generational", "logo", "chained"
+    generations: int = Field(default=3, ge=1, le=10)
+    candidates_per_gen: int = Field(default=4, ge=2, le=20)
+    judge_backend: str = "auto"
+    generation_backend: str = "auto"
+    generation_providers: Optional[List[str]] = None
+    evolution_mode: str = "hybrid"
+    wildcards: Optional[int] = 1
+    prompt: Optional[str] = None
+    company: Optional[str] = "Apex Systems"
+
+
 class AcceptCandidateRequest(BaseModel):
     candidate_id: str
     notes: Optional[str] = None

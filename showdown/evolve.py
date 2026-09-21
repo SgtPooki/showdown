@@ -424,7 +424,7 @@ def execute_evolution(
                     provider=prov.id,
                     model=prov.model,
                 )
-                prov_cands.extend(r_cands)
+                prov_cands.extend(r_cands[:r_count])
                 prov_prompts.append(r_prompt)
 
             if w_count > 0:
@@ -446,7 +446,7 @@ def execute_evolution(
                     provider=prov.id,
                     model=prov.model,
                 )
-                prov_cands.extend(w_cands)
+                prov_cands.extend(w_cands[:w_count])
                 prov_prompts.append(w_prompt)
 
             return prov.id, prov_cands, prov_prompts
@@ -504,7 +504,7 @@ def execute_evolution(
             is_wildcard=False,
             provider=resolved_backend,
             model=provider_inst.model,
-        )
+        )[:count]
         return EvolveResponse(
             prompt_used=full_prompt,
             new_candidates=new_cands,
@@ -533,7 +533,7 @@ def execute_evolution(
             is_wildcard=True,
             provider=resolved_backend,
             model=provider_inst.model,
-        )
+        )[:count]
         return EvolveResponse(
             prompt_used=full_prompt,
             new_candidates=new_cands,
@@ -577,7 +577,7 @@ def execute_evolution(
                 is_wildcard=False,
                 provider=resolved_backend,
                 model=provider_inst.model,
-            )
+            )[:r_count]
             combined_cands.extend(r_cands)
             refine_actual = len(r_cands)
             summaries.append(f"{refine_actual} refinements")
@@ -601,7 +601,7 @@ def execute_evolution(
                 is_wildcard=True,
                 provider=resolved_backend,
                 model=provider_inst.model,
-            )
+            )[:w_count]
             combined_cands.extend(w_cands)
             wildcard_actual = len(w_cands)
             summaries.append(f"{wildcard_actual} wildcards")
