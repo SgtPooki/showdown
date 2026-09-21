@@ -571,126 +571,18 @@ def export_tournament(
     voter: Optional[str] = None,
     consensus: Optional[str] = None,
     min_agreement: Optional[float] = None,
+    dedup: bool = True,
+    include_critique: bool = True,
     download: bool = False,
     jsonl: bool = False,
 ):
-    if consensus is not None and consensus not in ("strict", "majority"):
-        raise HTTPException(status_code=400, detail=f"Invalid consensus mode '{consensus}'. Must be 'strict' or 'majority'.")
-    if min_agreement is not None and not (0.0 < min_agreement <= 1.0):
-        raise HTTPException(status_code=400, detail="min_agreement must be between 0.0 and 1.0")
-    if (consensus or min_agreement is not None) and voter and voter.strip().lower() not in ("all", "pooled", "*"):
-        raise HTTPException(status_code=400, detail="Cannot combine 'voter' filter with multi-annotator 'consensus' or 'min_agreement'.")
-
     tournament = storage.load_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    cand_map = {c.id: c for c in tournament.candidates}
+    from showdown.export import export_dataset, format_jsonl
 
-    if format == "dpo":
-        pairs = []
-
-        if consensus or min_agreement is not None:
-            # Group matches by canonical candidate pair (c1, c2) where c1 < c2
-            canonical_groups: Dict[Tuple[str, str], List[Match]] = defaultdict(list)
-            for m in tournament.matches:
-                if m.winner in ("a", "b"):
-                    c1, c2 = (m.id_a, m.id_b) if m.id_a < m.id_b else (m.id_b, m.id_a)
-                    canonical_groups[(c1, c2)].append(m)
-
-            for (c1, c2), pair_matches in canonical_groups.items():
-                votes_c1 = sum(1 for m in pair_matches if (m.winner == "a" and m.id_a == c1) or (m.winner == "b" and m.id_b == c1))
-                votes_c2 = sum(1 for m in pair_matches if (m.winner == "a" and m.id_a == c2) or (m.winner == "b" and m.id_b == c2))
-                total_decisive = votes_c1 + votes_c2
-                if total_decisive < 2:
-                    continue
-                if votes_c1 == votes_c2:
-                    continue
-
-                voters_for_pair = sorted(list({m.voter for m in pair_matches if m.voter}))
-                if consensus == "strict" and (len(voters_for_pair) < 2 or (votes_c1 > 0 and votes_c2 > 0)):
-                    continue
-
-                agreement_rate = max(votes_c1, votes_c2) / total_decisive
-                if min_agreement is not None and agreement_rate < min_agreement:
-                    continue
-                if consensus == "majority" and agreement_rate <= 0.5:
-                    continue
-
-                chosen_id = c1 if votes_c1 > votes_c2 else c2
-                rejected_id = c2 if votes_c1 > votes_c2 else c1
-                chosen_cand = cand_map.get(chosen_id)
-                rejected_cand = cand_map.get(rejected_id)
-
-                if chosen_cand and rejected_cand:
-                    voters_for_pair = sorted(list({m.voter for m in pair_matches if m.voter}))
-                    pairs.append({
-                        "prompt": tournament.prompt or tournament.title,
-                        "chosen": chosen_cand.content,
-                        "rejected": rejected_cand.content,
-                        "chosen_id": chosen_id,
-                        "rejected_id": rejected_id,
-                        "agreement_rate": round(agreement_rate, 3),
-                        "votes_chosen": max(votes_c1, votes_c2),
-                        "votes_rejected": min(votes_c1, votes_c2),
-                        "evaluators": voters_for_pair,
-                        "consensus_mode": consensus or "threshold",
-                    })
-
-        else:
-            filtered_matches = tournament.matches
-            if voter and voter.strip().lower() not in ("all", "pooled", "*"):
-                filtered_matches = [m for m in tournament.matches if m.voter == voter]
-
-            for m in filtered_matches:
-                if m.winner in ("a", "b"):
-                    chosen_id = m.id_a if m.winner == "a" else m.id_b
-                    rejected_id = m.id_b if m.winner == "a" else m.id_a
-                    chosen_cand = cand_map.get(chosen_id)
-                    rejected_cand = cand_map.get(rejected_id)
-                    if chosen_cand and rejected_cand:
-                        pair_rec = {
-                            "prompt": tournament.prompt or tournament.title,
-                            "chosen": chosen_cand.content,
-                            "rejected": rejected_cand.content,
-                            "chosen_id": chosen_id,
-                            "rejected_id": rejected_id,
-                            "voter": m.voter,
-                            "timestamp": m.timestamp,
-                        }
-                        if m.notes:
-                            pair_rec["notes"] = m.notes
-                        pairs.append(pair_rec)
-
-        content = pairs
-        filename = f"{tournament.id}_dpo.{'jsonl' if jsonl else 'json'}"
-
-    elif format == "kto":
-        kto_records = []
-        for cid, t_rec in tournament.triage.items():
-            cand = cand_map.get(cid)
-            if not cand:
-                continue
-            if t_rec.status in (TriageStatus.LIKED, TriageStatus.FAVORITE):
-                kto_records.append({
-                    "prompt": tournament.prompt or tournament.title,
-                    "completion": cand.content,
-                    "label": True,
-                    "candidate_id": cid,
-                    "status": t_rec.status.value,
-                })
-            elif t_rec.status == TriageStatus.DISLIKED:
-                kto_records.append({
-                    "prompt": tournament.prompt or tournament.title,
-                    "completion": cand.content,
-                    "label": False,
-                    "candidate_id": cid,
-                    "status": t_rec.status.value,
-                })
-        content = kto_records
-        filename = f"{tournament.id}_kto.{'jsonl' if jsonl else 'json'}"
-
-    elif format == "leaderboard":
+    if format == "leaderboard":
         sorted_cands = sorted(
             tournament.candidates,
             key=lambda c: tournament.stats.get(c.id, CandidateStats()).elo,
@@ -710,13 +602,26 @@ def export_tournament(
             for i, c in enumerate(sorted_cands)
         ]
         filename = f"{tournament.id}_leaderboard.{'jsonl' if jsonl else 'json'}"
-
-    else:
+    elif format == "raw":
         content = tournament.model_dump()
         filename = f"{tournament.id}.json"
+    else:
+        try:
+            content = export_dataset(
+                tournaments=[tournament],
+                format=format,
+                voter=voter,
+                consensus=consensus,
+                min_agreement=min_agreement,
+                dedup=dedup,
+                include_critique=include_critique,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        filename = f"{tournament.id}_{format}.{'jsonl' if jsonl else 'json'}"
 
     if jsonl and isinstance(content, list):
-        body = "\n".join(json.dumps(row) for row in content)
+        body = format_jsonl(content)
         media_type = "application/x-ndjson"
     else:
         body = json.dumps(content, indent=2)
@@ -730,3 +635,64 @@ def export_tournament(
         return Response(content=body, media_type=media_type)
 
     return content
+
+
+@app.get("/api/export")
+def export_all(
+    format: str = "dpo",
+    task_type: Optional[str] = None,
+    voter: Optional[str] = None,
+    consensus: Optional[str] = None,
+    min_agreement: Optional[float] = None,
+    dedup: bool = True,
+    include_critique: bool = True,
+    split: Optional[float] = None,
+    split_by: str = "lineage",
+    seed: int = 42,
+    download: bool = False,
+    jsonl: bool = False,
+):
+    """Multi-tournament dataset aggregation and train/val partitioning."""
+    from showdown.export import export_dataset, format_jsonl
+
+    try:
+        tournaments = storage.list_tournaments()
+        data = export_dataset(
+            tournaments=tournaments,
+            format=format,
+            task_type=task_type,
+            voter=voter,
+            consensus=consensus,
+            min_agreement=min_agreement,
+            dedup=dedup,
+            include_critique=include_critique,
+            split=split,
+            split_by=split_by,
+            seed=seed,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    filename = f"showdown_{format}_{task_type or 'all'}.{'jsonl' if jsonl else 'json'}"
+
+    if jsonl:
+        if isinstance(data, list):
+            body = format_jsonl(data)
+        elif isinstance(data, dict) and "train" in data and "val" in data:
+            tagged_records = [{"split": "train", **r} for r in data["train"]] + [{"split": "val", **r} for r in data["val"]]
+            body = format_jsonl(tagged_records)
+        else:
+            body = json.dumps(data, indent=2)
+        media_type = "application/x-ndjson"
+    else:
+        body = json.dumps(data, indent=2)
+        media_type = "application/json"
+
+    if download:
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        return Response(content=body, media_type=media_type, headers=headers)
+
+    if jsonl:
+        return Response(content=body, media_type=media_type)
+
+    return data

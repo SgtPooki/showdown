@@ -124,39 +124,109 @@ def create(
 
 @app.command()
 def export(
-    tournament_id: str = typer.Argument(..., help="Tournament ID"),
-    format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'kto', 'leaderboard', or 'raw'"),
+    tournament_id: Optional[str] = typer.Argument(None, help="Tournament ID (optional if --all is set)"),
+    all_tournaments: bool = typer.Option(False, "--all", "-a", help="Export preferences across all tournaments"),
+    format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'kto', 'pairwise_margins', 'leaderboard', or 'raw'"),
+    task_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by task type: 'code', 'text', 'svg', 'markdown'"),
     voter: Optional[str] = typer.Option(None, "--voter", "-v", help="Filter export to matches by specific evaluator"),
     consensus: Optional[str] = typer.Option(None, "--consensus", help="Consensus mode: 'strict' (unanimous >=2 voters) or 'majority'"),
     min_agreement: Optional[float] = typer.Option(None, "--min-agreement", help="Minimum agreement threshold (0.5 to 1.0)"),
+    dedup: bool = typer.Option(True, "--dedup/--no-dedup", help="Deduplicate identical preference pairs"),
+    critique: bool = typer.Option(True, "--critique/--no-critique", help="Include evaluator notes and critiques"),
+    split: Optional[float] = typer.Option(None, "--split", help="Train/val split ratio (e.g. 0.8 for 80% train / 20% val)"),
+    split_by: str = typer.Option("lineage", "--split-by", help="Split partitioning strategy: 'lineage' or 'random'"),
+    out_dir: Optional[Path] = typer.Option(None, "--out-dir", help="Directory to save split files: train.jsonl and val.jsonl"),
     jsonl: bool = typer.Option(False, "--jsonl", help="Export as JSON Lines format"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="File path to save the export"),
 ):
-    """Export tournament preferences for DPO/KTO training or leaderboard stats."""
+    """Export tournament preferences for DPO/KTO/reward modeling with automated train/val splitting."""
     storage = Storage()
-    t = storage.load_tournament(tournament_id)
-    if not t:
-        console.print(f"[red]Error: Tournament '{tournament_id}' not found.[/red]")
-        raise typer.Exit(code=1)
 
-    from showdown.server import export_tournament
+    if all_tournaments or not tournament_id:
+        tournaments = storage.list_tournaments()
+        if not tournaments:
+            console.print("[yellow]No tournaments found in storage to export.[/yellow]")
+            raise typer.Exit(code=0)
+    else:
+        t = storage.load_tournament(tournament_id)
+        if not t:
+            console.print(f"[red]Error: Tournament '{tournament_id}' not found.[/red]")
+            raise typer.Exit(code=1)
+        tournaments = [t]
 
-    data = export_tournament(
-        tournament_id=tournament_id,
-        format=format,
-        voter=voter,
-        consensus=consensus,
-        min_agreement=min_agreement,
-        jsonl=jsonl,
-    )
-    if jsonl and isinstance(data, list):
-        formatted_output = "\n".join(json.dumps(row) for row in data)
+    from showdown.export import export_dataset, format_jsonl
+
+    if format == "leaderboard":
+        if len(tournaments) == 1:
+            t = tournaments[0]
+            sorted_cands = sorted(t.candidates, key=lambda c: t.stats.get(c.id, CandidateStats()).elo, reverse=True)
+            data = [
+                {
+                    "rank": i + 1,
+                    "id": c.id,
+                    "label": c.label,
+                    "elo": t.stats.get(c.id, CandidateStats()).elo,
+                    "matches": t.stats.get(c.id, CandidateStats()).matches,
+                    "wins": t.stats.get(c.id, CandidateStats()).wins,
+                    "losses": t.stats.get(c.id, CandidateStats()).losses,
+                    "ties": t.stats.get(c.id, CandidateStats()).ties,
+                }
+                for i, c in enumerate(sorted_cands)
+            ]
+        else:
+            console.print("[red]Error: 'leaderboard' format is only supported for single-tournament export.[/red]")
+            raise typer.Exit(code=1)
+    else:
+        try:
+            data = export_dataset(
+                tournaments=tournaments,
+                format=format,
+                task_type=task_type,
+                voter=voter,
+                consensus=consensus,
+                min_agreement=min_agreement,
+                dedup=dedup,
+                include_critique=critique,
+                split=split,
+                split_by=split_by,
+            )
+        except ValueError as e:
+            console.print(f"[red]Export error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+    # Handle directory output for splits
+    if out_dir and isinstance(data, dict) and "train" in data and "val" in data:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        train_file = out_dir / "train.jsonl"
+        val_file = out_dir / "val.jsonl"
+        info_file = out_dir / "dataset_info.json"
+
+        train_file.write_text(format_jsonl(data["train"]))
+        val_file.write_text(format_jsonl(data["val"]))
+        info_file.write_text(json.dumps(data["split_stats"], indent=2))
+
+        console.print(f"[bold green]Dataset split exported to {out_dir}:[/bold green]")
+        console.print(f"  • Train: [cyan]{len(data['train'])}[/cyan] records -> {train_file.name}")
+        console.print(f"  • Validation: [cyan]{len(data['val'])}[/cyan] records -> {val_file.name}")
+        console.print(f"  • Split ratio: [white]{data['split_stats'].get('train_ratio', 0.0) * 100:.1f}% train[/white] (by {split_by})")
+        return
+
+    if jsonl:
+        if isinstance(data, list):
+            formatted_output = format_jsonl(data)
+        elif isinstance(data, dict) and "train" in data and "val" in data:
+            tagged_records = [{"split": "train", **r} for r in data["train"]] + [{"split": "val", **r} for r in data["val"]]
+            formatted_output = format_jsonl(tagged_records)
+        else:
+            formatted_output = json.dumps(data, indent=2)
     else:
         formatted_output = json.dumps(data, indent=2)
 
     if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(formatted_output)
-        console.print(f"[green]Exported {format} data to[/green] {output}")
+        rec_count = len(data) if isinstance(data, list) else (len(data.get("train", [])) + len(data.get("val", [])))
+        console.print(f"[green]Exported {rec_count} {format} records across {len(tournaments)} tournament(s) to[/green] {output}")
     else:
         console.print(formatted_output)
 

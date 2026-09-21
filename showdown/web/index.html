@@ -589,7 +589,10 @@
       <div style="display: flex; gap: 12px; flex-wrap: wrap;">
         <button class="vote-btn vote-btn-a" onclick="downloadExport('dpo')">Download DPO JSON</button>
         <button class="vote-btn vote-btn-a" onclick="downloadExport('kto')">Download KTO JSON</button>
+        <button class="vote-btn vote-btn-a" onclick="downloadExport('pairwise_margins')">Download Margins JSON</button>
         <button class="vote-btn vote-btn-secondary" onclick="downloadExport('leaderboard')">Download Leaderboard JSON</button>
+        <button class="vote-btn vote-btn-secondary" onclick="downloadAllExport('dpo')">Export Entire Arena (DPO)</button>
+        <button class="vote-btn vote-btn-secondary" onclick="downloadAllSplit('dpo')">Export Arena Train/Val Split (Lineage)</button>
       </div>
       <pre id="export-preview" class="candidate-code" style="max-height: 400px;"></pre>
     </div>
@@ -1546,6 +1549,16 @@
       let url = `/api/tournaments/${currentTournament.id}/export?format=${format}&download=true`;
       if (voter && voter !== 'all') url += `&voter=${encodeURIComponent(voter)}`;
       if (consensus) url += `&consensus=${encodeURIComponent(consensus)}`;
+      window.location.href = url;
+    }
+
+    function downloadAllExport(format = 'dpo') {
+      const url = `/api/export?format=${format}&download=true`;
+      window.location.href = url;
+    }
+
+    function downloadAllSplit(format = 'dpo') {
+      const url = `/api/export?format=${format}&split=0.8&split_by=lineage&download=true`;
       window.location.href = url;
     }
 

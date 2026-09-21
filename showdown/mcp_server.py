@@ -347,6 +347,66 @@ def showdown_run_judge(
     )
 
 
+@server.tool(name="showdown_export_dataset", description="Export aggregated preference datasets across tournaments for DPO, KTO, or reward model fine-tuning with train/val splitting.")
+def mcp_export_dataset(
+    tournament_id: Optional[str] = None,
+    format: str = "dpo",
+    task_type: Optional[str] = None,
+    voter: Optional[str] = None,
+    consensus: Optional[str] = None,
+    min_agreement: Optional[float] = None,
+    dedup: bool = True,
+    include_critique: bool = True,
+    split: Optional[float] = None,
+    split_by: str = "lineage",
+) -> Dict[str, Any]:
+    """
+    Export preference pairs across tournaments or from a single tournament.
+
+    Args:
+        tournament_id: Optional tournament ID. If omitted, aggregates across all tournaments.
+        format: Export format ('dpo', 'kto', 'pairwise_margins').
+        task_type: Filter by task type ('code', 'text', 'svg', 'markdown').
+        voter: Filter matches by evaluator tag.
+        consensus: Multi-annotator consensus requirement ('strict' or 'majority').
+        min_agreement: Minimum inter-annotator agreement threshold (0.5 to 1.0).
+        dedup: Whether to deduplicate identical prompt/chosen/rejected pairs.
+        include_critique: Whether to include evaluator notes/critiques.
+        split: Optional train/val ratio (e.g. 0.8 for 80% train / 20% val).
+        split_by: Split partitioning strategy ('lineage' or 'random').
+
+    Returns:
+        Aggregated dataset records or train/val dictionary with split stats.
+    """
+    from showdown.export import export_dataset
+    if tournament_id:
+        t = storage.load_tournament(tournament_id)
+        if not t:
+            return {"error": f"Tournament '{tournament_id}' not found"}
+        tournaments = [t]
+    else:
+        tournaments = storage.list_tournaments()
+
+    try:
+        result = export_dataset(
+            tournaments=tournaments,
+            format=format,
+            task_type=task_type,
+            voter=voter,
+            consensus=consensus,
+            min_agreement=min_agreement,
+            dedup=dedup,
+            include_critique=include_critique,
+            split=split,
+            split_by=split_by,
+        )
+        if isinstance(result, list):
+            return {"record_count": len(result), "records": result}
+        return result
+    except ValueError as e:
+        return {"error": str(e)}
+
+
 def run_mcp_server(transport: str = "stdio", data_dir: Optional[str] = None) -> None:
     """Run the Showdown MCP server."""
     if data_dir:
