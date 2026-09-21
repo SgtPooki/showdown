@@ -11,8 +11,14 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+
+from showdown.realtime import (
+    event_hub,
+    stream_evolution_progress,
+    stream_tournament_events,
+)
 
 from showdown.engine import (
     apply_bradley_terry_stats,
@@ -258,6 +264,18 @@ def record_vote(tournament_id: str, vote: VoteRequest):
 
         storage.save_tournament(tournament)
 
+    event_hub.publish(
+        tournament_id,
+        "match_recorded",
+        {
+            "tournament_id": tournament_id,
+            "match": match_record.model_dump(),
+            "elo_a_after": elo_a_after,
+            "elo_b_after": elo_b_after,
+            "matches_count": len(tournament.matches),
+        },
+    )
+
     return {
         "status": "recorded",
         "elo_a_after": elo_a_after,
@@ -290,6 +308,16 @@ def undo_vote(tournament_id: str, voter: Optional[str] = None):
         tournament.stats = replay_stats(tournament.candidates, tournament.matches)
         tournament.updated_at = time.time()
         storage.save_tournament(tournament)
+
+    event_hub.publish(
+        tournament_id,
+        "vote_undone",
+        {
+            "tournament_id": tournament_id,
+            "undone_match": undone_match.model_dump(),
+            "remaining_matches": len(tournament.matches),
+        },
+    )
 
     return {
         "status": "undone",
@@ -347,13 +375,25 @@ def record_triage(tournament_id: str, req: TriageRequest):
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
 
-        tournament.triage[req.candidate_id] = TriageRecord(
+        triage_rec = TriageRecord(
             status=req.status,
             notes=req.notes,
             updated_at=time.time(),
         )
+        tournament.triage[req.candidate_id] = triage_rec
         tournament.updated_at = time.time()
         storage.save_tournament(tournament)
+
+    event_hub.publish(
+        tournament_id,
+        "triage_updated",
+        {
+            "tournament_id": tournament_id,
+            "candidate_id": req.candidate_id,
+            "record": triage_rec.model_dump(),
+        },
+    )
+
     return {"status": "saved", "candidate_id": req.candidate_id}
 
 
@@ -518,6 +558,19 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
 
         fresh_tournament.updated_at = time.time()
         storage.save_tournament(fresh_tournament)
+
+    event_hub.publish(
+        tournament_id,
+        "candidates_added",
+        {
+            "tournament_id": tournament_id,
+            "new_count": len(evolve_res.new_candidates),
+            "total_candidates": len(fresh_tournament.candidates),
+            "mode": evolve_res.mode,
+            "providers_used": evolve_res.providers_used,
+        },
+    )
+
     return evolve_res
 
 
@@ -572,6 +625,17 @@ def accept_candidate(tournament_id: str, req: AcceptCandidateRequest):
 
     accepted_cand = cand_map[req.candidate_id]
     stat = tournament.stats.get(req.candidate_id, CandidateStats())
+
+    event_hub.publish(
+        tournament_id,
+        "candidate_accepted",
+        {
+            "tournament_id": tournament_id,
+            "candidate_id": req.candidate_id,
+            "notes": req.notes,
+        },
+    )
+
     return {
         "status": "completed",
         "accepted_candidate_id": req.candidate_id,
@@ -835,4 +899,65 @@ def get_provider_leaderboard():
     """Cross-tournament model/provider leaderboard based on historical matches."""
     tournaments = storage.list_tournaments()
     return compute_provider_leaderboard(tournaments)
+
+
+@app.get("/api/tournaments/{tournament_id}/events")
+async def tournament_events(
+    tournament_id: str,
+    timeout: Optional[float] = Query(None),
+):
+    """Server-Sent Events (SSE) stream broadcasting live match and Elo updates for a tournament."""
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    return StreamingResponse(
+        stream_tournament_events(tournament_id, timeout=timeout),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/tournaments/{tournament_id}/evolve/stream")
+@app.post("/api/tournaments/{tournament_id}/evolve/stream")
+async def evolve_tournament_stream(
+    tournament_id: str,
+    req: Optional[EvolveRequest] = Body(None),
+    count: int = Query(5, ge=1, le=20),
+    instructions: Optional[str] = Query(None),
+    backend: Optional[str] = Query("auto"),
+    providers: Optional[List[str]] = Query(None),
+    mode: str = Query("refine"),
+    wildcards: Optional[int] = Query(None),
+    chain_mode: Optional[str] = Query(None),
+):
+    """Stream candidate evolution lifecycle progress events via Server-Sent Events (SSE)."""
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    evolve_req = req or EvolveRequest(
+        count=count,
+        instructions=instructions,
+        backend=backend,
+        providers=providers,
+        mode=mode,
+        wildcards=wildcards,
+        chain_mode=chain_mode,
+    )
+
+    return StreamingResponse(
+        stream_evolution_progress(tournament, evolve_req, storage),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
