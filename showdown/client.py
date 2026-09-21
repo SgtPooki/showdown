@@ -22,6 +22,7 @@ def create_tournament(
     tournament_id: Optional[str] = None,
     parent_ids: Optional[List[str]] = None,
     context: Optional[str] = None,
+    blinded: bool = False,
     data_dir: Optional[str] = None,
     overwrite: bool = False,
 ) -> Tournament:
@@ -37,6 +38,7 @@ def create_tournament(
         tournament_id: Optional custom slug/id.
         parent_ids: Optional parent tournament IDs to chain from.
         context: Optional context text from upstream tournaments.
+        blinded: If True, candidate metadata is obscured during evaluation.
         data_dir: Optional custom data storage directory.
         overwrite: If True, overwrite existing tournament with the same ID.
 
@@ -67,6 +69,7 @@ def create_tournament(
         candidates=parsed_candidates,
         parent_ids=parent_ids or [],
         context=context,
+        blinded=blinded,
         overwrite=overwrite,
     )
 
@@ -117,5 +120,22 @@ def wait_for_tournament(
         if data_dir:
             showdown.server.storage = storage
         return wait_for_completion(tournament_id=tournament_id, timeout=timeout)
+    finally:
+        showdown.server.storage = original_storage
+
+
+def undo_vote(
+    tournament_id: str,
+    data_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Rollback the last recorded vote in a tournament and recalibrate Elo ratings."""
+    from showdown.server import undo_vote as server_undo_vote
+    import showdown.server
+    storage = Storage(data_dir=data_dir)
+    original_storage = showdown.server.storage
+    try:
+        if data_dir:
+            showdown.server.storage = storage
+        return server_undo_vote(tournament_id=tournament_id)
     finally:
         showdown.server.storage = original_storage

@@ -430,10 +430,11 @@
       <button id="nav-matchup" class="nav-tab active" onclick="switchView('matchup')">Arena Matchup</button>
       <button id="nav-leaderboard" class="nav-tab" onclick="switchView('leaderboard')">Leaderboard</button>
       <button id="nav-export" class="nav-tab" onclick="switchView('export')">Export DPO</button>
-      <button id="nav-evolve" class="nav-tab" style="color: var(--brand-accent); font-weight: 600;" onclick="openEvolveModal()">✨ Evolve Pool</button>
+      <button id="nav-evolve" class="nav-tab" style="color: var(--brand-accent); font-weight: 600;" onclick="openEvolveModal()">Evolve Pool</button>
     </div>
 
-    <div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <button id="btn-blind-toggle" onclick="toggleBlindMode()" class="nav-tab" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; padding: 6px 12px; border: 1px solid var(--border-default);" title="Toggle blinded evaluation mode">Blind: OFF</button>
       <select id="tournament-select" class="tournament-selector" onchange="onTournamentChange(this.value)">
         <option value="">Select tournament...</option>
       </select>
@@ -508,6 +509,9 @@
         <button class="vote-btn vote-btn-secondary" onclick="loadNextMatchup()">
           Skip Matchup <span class="kbd-shortcut">S</span>
         </button>
+        <button class="vote-btn vote-btn-secondary" id="btn-undo" onclick="undoLastVote()" title="Undo last vote (Z or Ctrl+Z)">
+          Undo <span class="kbd-shortcut">Z</span>
+        </button>
       </div>
     </div>
 
@@ -517,6 +521,7 @@
         <div style="display: flex; align-items: center; gap: 10px;">
           <h2 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Candidate Leaderboard</h2>
           <span id="agreement-pill" style="display: none; font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 3px 10px; border-radius: 9999px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--brand-accent);"></span>
+          <span id="consistency-pill" style="display: none; font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 3px 10px; border-radius: 9999px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); color: #34d399;"></span>
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
           <div style="display: flex; align-items: center; gap: 8px;">
@@ -525,7 +530,7 @@
               <option value="pooled">All Votes (Pooled)</option>
             </select>
           </div>
-          <button class="vote-btn vote-btn-a" onclick="openEvolveModal()">✨ Evolve Next Generation</button>
+          <button class="vote-btn vote-btn-a" onclick="openEvolveModal()">Evolve Next Generation</button>
         </div>
       </div>
       <table class="leaderboard-table">
@@ -653,6 +658,98 @@
   <script>
     let currentTournament = null;
     let currentMatchup = null;
+    let blindMode = false;
+
+    function updateBlindModeUI() {
+      const btn = document.getElementById('btn-blind-toggle');
+      if (!btn) return;
+      if (blindMode) {
+        btn.textContent = 'Blind: ON';
+        btn.style.borderColor = 'var(--brand-accent)';
+        btn.style.color = 'var(--brand-accent)';
+        btn.style.background = 'rgba(59, 130, 246, 0.12)';
+      } else {
+        btn.textContent = 'Blind: OFF';
+        btn.style.borderColor = 'var(--border-default)';
+        btn.style.color = 'var(--text-secondary)';
+        btn.style.background = 'transparent';
+      }
+    }
+
+    async function toggleBlindMode() {
+      blindMode = !blindMode;
+      updateBlindModeUI();
+      if (currentMatchup) {
+        renderCandidate('a', currentMatchup.candidate_a);
+        renderCandidate('b', currentMatchup.candidate_b);
+      }
+      if (currentTournament) {
+        currentTournament.blinded = blindMode;
+        try {
+          await fetch(`/api/tournaments/${currentTournament.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ blinded: blindMode })
+          });
+        } catch (e) {
+          console.error("Failed to persist blind mode", e);
+        }
+      }
+    }
+
+    function showToast(msg) {
+      let toast = document.getElementById('toast-msg');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-msg';
+        toast.style.position = 'fixed';
+        toast.style.bottom = '24px';
+        toast.style.right = '24px';
+        toast.style.background = 'var(--bg-elevated)';
+        toast.style.border = '1px solid var(--border-emphasis)';
+        toast.style.color = 'var(--text-primary)';
+        toast.style.padding = '10px 18px';
+        toast.style.borderRadius = 'var(--radius-md)';
+        toast.style.fontSize = '13px';
+        toast.style.fontFamily = "'JetBrains Mono', monospace";
+        toast.style.boxShadow = '0 10px 15px -3px rgba(0,0,0,0.5)';
+        toast.style.zIndex = '9999';
+        toast.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+        document.body.appendChild(toast);
+      }
+      toast.textContent = msg;
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(8px)';
+      }, 2500);
+    }
+
+    async function undoLastVote() {
+      if (!currentTournament) return;
+      const undoBtn = document.getElementById('btn-undo');
+      if (undoBtn) undoBtn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/tournaments/${currentTournament.id}/undo`, {
+          method: 'POST'
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.detail || 'No votes to undo.');
+          return;
+        }
+        const data = await res.json();
+        showToast(`Undone vote. Remaining: ${data.remaining_matches}`);
+        await loadNextMatchup();
+        await updateLeaderboard();
+      } catch (err) {
+        console.error("Failed to undo vote", err);
+      } finally {
+        if (undoBtn) undoBtn.disabled = false;
+      }
+    }
 
     async function init() {
       await loadTournamentList();
@@ -691,6 +788,8 @@
         window.history.replaceState(null, '', `?t=${encodeURIComponent(id)}`);
         const res = await fetch(`/api/tournaments/${id}`);
         currentTournament = await res.json();
+        blindMode = currentTournament.blinded || false;
+        updateBlindModeUI();
         document.getElementById('prompt-text').textContent = currentTournament.prompt || currentTournament.title;
         loadNextMatchup();
         updateLeaderboard();
@@ -760,7 +859,11 @@
     function renderCandidate(side, cand) {
       const body = document.getElementById(`body-${side}`);
       const meta = document.getElementById(`meta-${side}`);
-      meta.textContent = cand.label || cand.id;
+      if (blindMode) {
+        meta.textContent = 'Masked (Blind Mode)';
+      } else {
+        meta.textContent = cand.label || cand.id;
+      }
       body.innerHTML = '';
 
       // Update triage button highlights
@@ -1016,6 +1119,28 @@
         }
       }
 
+      // Fetch voter self-consistency calibration
+      const consistencyPill = document.getElementById('consistency-pill');
+      if (consistencyPill) {
+        const selectedEvaluator = evalSelect.value;
+        let cUrl = `/api/tournaments/${currentTournament.id}/consistency`;
+        if (selectedEvaluator && selectedEvaluator !== 'pooled') {
+          cUrl += `?voter=${encodeURIComponent(selectedEvaluator)}`;
+        }
+        fetch(cUrl)
+          .then(res => res.ok ? res.json() : null)
+          .then(cData => {
+            if (cData && cData.repeated_pairs_count > 0 && cData.consistency_rate !== null) {
+              const cPct = Math.round(cData.consistency_rate * 100);
+              consistencyPill.style.display = 'inline-block';
+              consistencyPill.textContent = `Voter Consistency: ${cPct}% (${cData.consistent_pairs_count}/${cData.repeated_pairs_count})`;
+            } else {
+              consistencyPill.style.display = 'none';
+            }
+          })
+          .catch(() => { consistencyPill.style.display = 'none'; });
+      }
+
       // Calculate pooled ranks for delta calculation
       const pooledItems = pooledTourney.candidates.map(c => {
         const stat = pooledTourney.stats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
@@ -1260,6 +1385,12 @@
 
     function setupKeyboardShortcuts() {
       window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+          e.preventDefault();
+          undoLastVote();
+          return;
+        }
+
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
           const modal = document.getElementById('evolve-modal');
           if (modal && modal.style.display === 'flex') {
@@ -1273,7 +1404,9 @@
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
         if (document.getElementById('view-matchup').style.display === 'none') return;
 
-        if (e.key === '1' || e.key === 'ArrowLeft') {
+        if (e.key === 'z' || e.key === 'Z') {
+          undoLastVote();
+        } else if (e.key === '1' || e.key === 'ArrowLeft') {
           submitVote('a');
         } else if (e.key === '2' || e.key === 'ArrowRight') {
           submitVote('b');

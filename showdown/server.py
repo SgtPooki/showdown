@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from showdown.engine import (
     check_convergence,
     compute_inter_annotator_agreement,
+    compute_voter_consistency,
     get_dynamic_k_factor,
     replay_stats,
     select_matchup,
@@ -36,6 +37,7 @@ from showdown.models import (
     TriageRequest,
     TriageStatus,
     Tournament,
+    UpdateTournamentRequest,
     VoteRequest,
 )
 from showdown.storage import Storage
@@ -95,6 +97,7 @@ def create_tournament(req: CreateTournamentRequest):
         candidates=req.candidates,
         parent_ids=req.parent_ids,
         context=req.context,
+        blinded=req.blinded,
         created_at=now,
         updated_at=now,
     )
@@ -226,6 +229,69 @@ def record_vote(tournament_id: str, vote: VoteRequest):
         "elo_a_after": elo_a_after,
         "elo_b_after": elo_b_after,
     }
+
+
+@app.post("/api/tournaments/{tournament_id}/undo")
+def undo_vote(tournament_id: str):
+    with _tournament_locks[tournament_id]:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
+        if not tournament.matches:
+            raise HTTPException(status_code=400, detail="No votes to undo")
+
+        undone_match = tournament.matches.pop()
+        tournament.stats = replay_stats(tournament.candidates, tournament.matches)
+        tournament.updated_at = time.time()
+        storage.save_tournament(tournament)
+
+    return {
+        "status": "undone",
+        "remaining_matches": len(tournament.matches),
+        "undone_match": {
+            "id_a": undone_match.id_a,
+            "id_b": undone_match.id_b,
+            "winner": undone_match.winner,
+            "voter": undone_match.voter,
+        },
+    }
+
+
+@app.patch("/api/tournaments/{tournament_id}")
+def update_tournament(tournament_id: str, req: UpdateTournamentRequest):
+    with _tournament_locks[tournament_id]:
+        tournament = storage.load_tournament(tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
+
+        if req.title is not None:
+            tournament.title = req.title
+        if req.prompt is not None:
+            tournament.prompt = req.prompt
+        if req.blinded is not None:
+            tournament.blinded = req.blinded
+        if req.context is not None:
+            tournament.context = req.context
+
+        tournament.updated_at = time.time()
+        storage.save_tournament(tournament)
+
+    return {
+        "status": "updated",
+        "tournament_id": tournament.id,
+        "blinded": tournament.blinded,
+    }
+
+
+@app.get("/api/tournaments/{tournament_id}/consistency")
+def get_voter_consistency(tournament_id: str, voter: Optional[str] = None):
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    data = compute_voter_consistency(tournament.matches, voter=voter)
+    data["tournament_id"] = tournament.id
+    return data
 
 
 @app.post("/api/tournaments/{tournament_id}/triage")

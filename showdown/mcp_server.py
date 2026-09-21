@@ -268,6 +268,42 @@ def showdown_export_dataset(
     }
 
 
+@server.tool()
+def showdown_undo_vote(
+    tournament_id: str,
+) -> Dict[str, Any]:
+    """
+    Undo the last vote recorded in a tournament and recalibrate Elo ratings.
+
+    Args:
+        tournament_id: ID of the tournament.
+
+    Returns:
+        Status and remaining match count.
+    """
+    from showdown.server import undo_vote as server_undo_vote
+    return server_undo_vote(tournament_id=tournament_id)
+
+
+@server.tool()
+def showdown_get_consistency(
+    tournament_id: str,
+    voter: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Calculate voter self-consistency metrics across repeated matchups.
+
+    Args:
+        tournament_id: ID of the tournament.
+        voter: Optional judge name to filter consistency calculation.
+
+    Returns:
+        Consistency rate, repeated pair counts, and self-reversals.
+    """
+    from showdown.server import get_voter_consistency
+    return get_voter_consistency(tournament_id=tournament_id, voter=voter)
+
+
 def run_mcp_server(transport: str = "stdio", data_dir: Optional[str] = None) -> None:
     """Run the Showdown MCP server."""
     if data_dir:

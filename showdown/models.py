@@ -78,6 +78,7 @@ class Tournament(BaseModel):
     parent_ids: List[str] = Field(default_factory=list)
     context: Optional[str] = None
     voters: List[str] = Field(default_factory=list)
+    blinded: bool = False
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
 
@@ -90,6 +91,7 @@ class CreateTournamentRequest(BaseModel):
     candidates: List[Candidate]
     parent_ids: List[str] = Field(default_factory=list)
     context: Optional[str] = None
+    blinded: bool = False
     overwrite: bool = False
 
 
@@ -126,4 +128,11 @@ class EvolveResponse(BaseModel):
 class AcceptCandidateRequest(BaseModel):
     candidate_id: str
     notes: Optional[str] = None
+
+
+class UpdateTournamentRequest(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    blinded: Optional[bool] = None
+    context: Optional[str] = None
 

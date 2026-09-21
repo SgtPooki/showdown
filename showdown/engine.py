@@ -288,3 +288,58 @@ def compute_inter_annotator_agreement(
         "evaluator_pairs": evaluator_pairs,
     }
 
+
+def compute_voter_consistency(
+    matches: List[Match],
+    voter: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Measure consistency across repeated evaluations of identical candidate pairs by the same voter.
+    Returns consistent pairs count, self-reversals, and consistency rate.
+    """
+    filtered_matches = matches
+    if voter and voter.strip().lower() not in ("all", "pooled", "*"):
+        filtered_matches = [m for m in matches if m.voter == voter]
+
+    pair_history: Dict[Tuple[str, Tuple[str, str]], List[int]] = {}
+
+    for m in filtered_matches:
+        v = m.voter or "anonymous"
+        c1, c2 = (m.id_a, m.id_b) if m.id_a < m.id_b else (m.id_b, m.id_a)
+        key = (v, (c1, c2))
+
+        if m.winner == "a":
+            d = 1 if m.id_a == c1 else -1
+        elif m.winner == "b":
+            d = -1 if m.id_a == c1 else 1
+        else:
+            d = 0
+
+        if key not in pair_history:
+            pair_history[key] = []
+        pair_history[key].append(d)
+
+    repeated_pairs_count = 0
+    consistent_pairs_count = 0
+    inconsistent_pairs_count = 0
+
+    for (v, pair), directions in pair_history.items():
+        decisive_directions = [d for d in directions if d != 0]
+        if len(decisive_directions) >= 2:
+            repeated_pairs_count += 1
+            if all(d == decisive_directions[0] for d in decisive_directions):
+                consistent_pairs_count += 1
+            else:
+                inconsistent_pairs_count += 1
+
+    total_evaluated = consistent_pairs_count + inconsistent_pairs_count
+    rate = round(consistent_pairs_count / total_evaluated, 3) if total_evaluated > 0 else None
+
+    return {
+        "voter": voter or "all",
+        "repeated_pairs_count": repeated_pairs_count,
+        "consistent_pairs_count": consistent_pairs_count,
+        "self_reversals_count": inconsistent_pairs_count,
+        "consistency_rate": rate,
+    }
+
