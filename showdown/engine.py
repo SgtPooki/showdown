@@ -2,7 +2,7 @@
 
 import math
 import random
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from showdown.models import Candidate, CandidateStats, Match, Tournament
 
 DEFAULT_ELO = 1200.0
@@ -192,3 +192,99 @@ def check_convergence(
     confidence = min(1.0, max(0.0, margin / lead_margin))
     is_converged = margin >= lead_margin and min_played >= min_matches_per_cand
     return is_converged, round(confidence, 2)
+
+
+def compute_inter_annotator_agreement(
+    matches: List[Match],
+) -> Dict[str, Any]:
+    """
+    Calculate inter-annotator agreement metrics across all distinct pairs of evaluators.
+    Canonicalizes pairs (min(id_a, id_b), max(id_a, id_b)) to detect directional alignment or reversals.
+    """
+    voters = sorted(list({m.voter for m in matches if m.voter}))
+    if len(voters) < 2:
+        return {
+            "voters": voters,
+            "total_matches": len(matches),
+            "evaluator_pairs": [],
+            "overall_agreement_rate": None,
+            "message": "At least 2 distinct evaluators required to compute inter-annotator agreement.",
+        }
+
+    # Map: voter -> { (c1, c2): direction } where c1 < c2
+    # direction: +1 if c1 preferred, -1 if c2 preferred, 0 if tie/both_bad
+    voter_decisions: Dict[str, Dict[Tuple[str, str], int]] = {v: {} for v in voters}
+
+    for m in matches:
+        if not m.voter:
+            continue
+        c1, c2 = (m.id_a, m.id_b) if m.id_a < m.id_b else (m.id_b, m.id_a)
+        pair = (c1, c2)
+
+        if m.winner == "a":
+            direction = 1 if m.id_a == c1 else -1
+        elif m.winner == "b":
+            direction = -1 if m.id_a == c1 else 1
+        else:
+            direction = 0
+
+        voter_decisions[m.voter][pair] = direction
+
+    evaluator_pairs = []
+    total_agreements = 0
+    total_decisive = 0
+
+    for i in range(len(voters)):
+        for j in range(i + 1, len(voters)):
+            v1 = voters[i]
+            v2 = voters[j]
+            decisions_1 = voter_decisions[v1]
+            decisions_2 = voter_decisions[v2]
+
+            shared_pairs = set(decisions_1.keys()) & set(decisions_2.keys())
+            if not shared_pairs:
+                continue
+
+            agreed = 0
+            reversals = 0
+            ties = 0
+
+            for pair in shared_pairs:
+                d1 = decisions_1[pair]
+                d2 = decisions_2[pair]
+                if d1 == 0 or d2 == 0:
+                    ties += 1
+                elif d1 == d2:
+                    agreed += 1
+                else:
+                    reversals += 1
+
+            decisive = agreed + reversals
+            agreement_rate = round(agreed / decisive, 3) if decisive > 0 else 1.0
+            reversal_rate = round(reversals / decisive, 3) if decisive > 0 else 0.0
+
+            evaluator_pairs.append({
+                "evaluator_a": v1,
+                "evaluator_b": v2,
+                "shared_pairs_count": len(shared_pairs),
+                "decisive_pairs_count": decisive,
+                "agreements": agreed,
+                "reversals": reversals,
+                "ties": ties,
+                "agreement_rate": agreement_rate,
+                "reversal_rate": reversal_rate,
+            })
+
+            total_agreements += agreed
+            total_decisive += decisive
+
+    overall_rate = round(total_agreements / total_decisive, 3) if total_decisive > 0 else None
+
+    return {
+        "voters": voters,
+        "total_matches": len(matches),
+        "shared_pairs_evaluated": total_decisive,
+        "overall_agreement_rate": overall_rate,
+        "evaluator_pairs": evaluator_pairs,
+    }
+

@@ -216,9 +216,29 @@ def showdown_get_chain(
 
 
 @server.tool()
+def showdown_get_agreement(
+    tournament_id: str,
+) -> Dict[str, Any]:
+    """
+    Calculate and retrieve inter-annotator agreement metrics across judges in a tournament.
+
+    Args:
+        tournament_id: ID of the tournament.
+
+    Returns:
+        Agreement rates, shared pairs counts, reversals, and pairwise evaluator comparisons.
+    """
+    from showdown.server import get_inter_annotator_agreement
+    return get_inter_annotator_agreement(tournament_id=tournament_id)
+
+
+@server.tool()
 def showdown_export_dataset(
     tournament_id: str,
     format: str = "dpo",
+    voter: Optional[str] = None,
+    consensus: Optional[str] = None,
+    min_agreement: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Export tournament match judgments into standardized preference dataset formats.
@@ -226,11 +246,20 @@ def showdown_export_dataset(
     Args:
         tournament_id: ID of the tournament.
         format: Dataset format: 'dpo' (Direct Preference Optimization), 'kto' (Kahneman-Tversky Optimization), or 'leaderboard'.
+        voter: Optional evaluator filter to export only judgments from that specific judge.
+        consensus: Optional consensus mode ('strict' for unanimous with >=2 judges, or 'majority').
+        min_agreement: Optional minimum agreement threshold (0.5 to 1.0).
 
     Returns:
-        List of preference records.
+        List of preference records with agreement provenance metadata.
     """
-    records = export_tournament(tournament_id=tournament_id, format=format)
+    records = export_tournament(
+        tournament_id=tournament_id,
+        format=format,
+        voter=voter,
+        consensus=consensus,
+        min_agreement=min_agreement,
+    )
     return {
         "tournament_id": tournament_id,
         "format": format,

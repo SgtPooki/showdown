@@ -126,6 +126,9 @@ def create(
 def export(
     tournament_id: str = typer.Argument(..., help="Tournament ID"),
     format: str = typer.Option("dpo", "--format", help="Export format: 'dpo', 'kto', 'leaderboard', or 'raw'"),
+    voter: Optional[str] = typer.Option(None, "--voter", "-v", help="Filter export to matches by specific evaluator"),
+    consensus: Optional[str] = typer.Option(None, "--consensus", help="Consensus mode: 'strict' (unanimous >=2 voters) or 'majority'"),
+    min_agreement: Optional[float] = typer.Option(None, "--min-agreement", help="Minimum agreement threshold (0.5 to 1.0)"),
     jsonl: bool = typer.Option(False, "--jsonl", help="Export as JSON Lines format"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="File path to save the export"),
 ):
@@ -138,7 +141,14 @@ def export(
 
     from showdown.server import export_tournament
 
-    data = export_tournament(tournament_id=tournament_id, format=format, jsonl=jsonl)
+    data = export_tournament(
+        tournament_id=tournament_id,
+        format=format,
+        voter=voter,
+        consensus=consensus,
+        min_agreement=min_agreement,
+        jsonl=jsonl,
+    )
     if jsonl and isinstance(data, list):
         formatted_output = "\n".join(json.dumps(row) for row in data)
     else:

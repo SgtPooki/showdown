@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from showdown.engine import (
     check_convergence,
+    compute_inter_annotator_agreement,
     get_dynamic_k_factor,
     replay_stats,
     select_matchup,
@@ -421,10 +422,28 @@ def wait_for_completion(
     }
 
 
+@app.get("/api/tournaments/{tournament_id}/agreement")
+def get_inter_annotator_agreement(tournament_id: str):
+    """
+    Calculate and return inter-annotator agreement metrics across all judges in this tournament.
+    """
+    tournament = storage.load_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    agreement_data = compute_inter_annotator_agreement(tournament.matches)
+    agreement_data["tournament_id"] = tournament.id
+    agreement_data["title"] = tournament.title
+    return agreement_data
+
+
 @app.get("/api/tournaments/{tournament_id}/export")
 def export_tournament(
     tournament_id: str,
     format: str = "dpo",
+    voter: Optional[str] = None,
+    consensus: Optional[str] = None,
+    min_agreement: Optional[float] = None,
     download: bool = False,
     jsonl: bool = False,
 ):
@@ -436,21 +455,76 @@ def export_tournament(
 
     if format == "dpo":
         pairs = []
-        for m in tournament.matches:
-            if m.winner in ("a", "b"):
-                chosen_id = m.id_a if m.winner == "a" else m.id_b
-                rejected_id = m.id_b if m.winner == "a" else m.id_a
+
+        if consensus or min_agreement is not None:
+            # Group matches by canonical candidate pair (c1, c2) where c1 < c2
+            canonical_groups: Dict[Tuple[str, str], List[Match]] = defaultdict(list)
+            for m in tournament.matches:
+                if m.winner in ("a", "b"):
+                    c1, c2 = (m.id_a, m.id_b) if m.id_a < m.id_b else (m.id_b, m.id_a)
+                    canonical_groups[(c1, c2)].append(m)
+
+            for (c1, c2), pair_matches in canonical_groups.items():
+                votes_c1 = sum(1 for m in pair_matches if (m.winner == "a" and m.id_a == c1) or (m.winner == "b" and m.id_b == c1))
+                votes_c2 = sum(1 for m in pair_matches if (m.winner == "a" and m.id_a == c2) or (m.winner == "b" and m.id_b == c2))
+                total_decisive = votes_c1 + votes_c2
+                if total_decisive == 0:
+                    continue
+
+                agreement_rate = max(votes_c1, votes_c2) / total_decisive
+
+                if consensus == "strict" and (total_decisive < 2 or (votes_c1 > 0 and votes_c2 > 0)):
+                    continue
+                if min_agreement is not None and agreement_rate < min_agreement:
+                    continue
+                if consensus == "majority" and agreement_rate <= 0.5:
+                    continue
+
+                chosen_id = c1 if votes_c1 > votes_c2 else c2
+                rejected_id = c2 if votes_c1 > votes_c2 else c1
                 chosen_cand = cand_map.get(chosen_id)
                 rejected_cand = cand_map.get(rejected_id)
+
                 if chosen_cand and rejected_cand:
+                    voters_for_pair = sorted(list({m.voter for m in pair_matches if m.voter}))
                     pairs.append({
                         "prompt": tournament.prompt or tournament.title,
                         "chosen": chosen_cand.content,
                         "rejected": rejected_cand.content,
                         "chosen_id": chosen_id,
                         "rejected_id": rejected_id,
-                        "timestamp": m.timestamp,
+                        "agreement_rate": round(agreement_rate, 3),
+                        "votes_chosen": max(votes_c1, votes_c2),
+                        "votes_rejected": min(votes_c1, votes_c2),
+                        "evaluators": voters_for_pair,
+                        "consensus_mode": consensus or "threshold",
                     })
+
+        else:
+            filtered_matches = tournament.matches
+            if voter and voter.strip().lower() not in ("all", "pooled", "*"):
+                filtered_matches = [m for m in tournament.matches if m.voter == voter]
+
+            for m in filtered_matches:
+                if m.winner in ("a", "b"):
+                    chosen_id = m.id_a if m.winner == "a" else m.id_b
+                    rejected_id = m.id_b if m.winner == "a" else m.id_a
+                    chosen_cand = cand_map.get(chosen_id)
+                    rejected_cand = cand_map.get(rejected_id)
+                    if chosen_cand and rejected_cand:
+                        pair_rec = {
+                            "prompt": tournament.prompt or tournament.title,
+                            "chosen": chosen_cand.content,
+                            "rejected": rejected_cand.content,
+                            "chosen_id": chosen_id,
+                            "rejected_id": rejected_id,
+                            "voter": m.voter,
+                            "timestamp": m.timestamp,
+                        }
+                        if m.notes:
+                            pair_rec["notes"] = m.notes
+                        pairs.append(pair_rec)
+
         content = pairs
         filename = f"{tournament.id}_dpo.{'jsonl' if jsonl else 'json'}"
 

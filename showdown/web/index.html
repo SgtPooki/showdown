@@ -514,7 +514,10 @@
     <!-- Leaderboard View -->
     <div id="view-leaderboard" style="display: none;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-        <h2 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Candidate Leaderboard</h2>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <h2 style="font-family: 'Space Grotesk', sans-serif; font-size: 18px;">Candidate Leaderboard</h2>
+          <span id="agreement-pill" style="display: none; font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 3px 10px; border-radius: 9999px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--brand-accent);"></span>
+        </div>
         <div style="display: flex; align-items: center; gap: 12px;">
           <div style="display: flex; align-items: center; gap: 8px;">
             <label for="evaluator-filter" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">EVALUATOR:</label>
@@ -547,6 +550,22 @@
       <div class="prompt-banner">
         <div class="prompt-label">DPO & KTO Preference Dataset Export</div>
         <div class="prompt-text">Standardized preference datasets containing prompt, chosen, and rejected/binary outputs for Direct Preference Optimization (DPO), Kahneman-Tversky Optimization (KTO), and model alignment.</div>
+      </div>
+      <div style="display: flex; gap: 16px; align-items: center; background: var(--bg-surface); border: 1px solid var(--border-default); padding: 12px 16px; border-radius: var(--radius-md); flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">EVALUATOR FILTER:</label>
+          <select id="export-evaluator-filter" onchange="loadExportPreview()" style="background: var(--bg-canvas); border: 1px solid var(--border-default); color: var(--text-primary); padding: 5px 10px; border-radius: var(--radius-sm); font-size: 12px; font-family: 'Inter', sans-serif;">
+            <option value="all">All Evaluators</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">CONSENSUS FILTER:</label>
+          <select id="export-consensus-filter" onchange="loadExportPreview()" style="background: var(--bg-canvas); border: 1px solid var(--border-default); color: var(--text-primary); padding: 5px 10px; border-radius: var(--radius-sm); font-size: 12px; font-family: 'Inter', sans-serif;">
+            <option value="">None (All Pairs)</option>
+            <option value="majority">Majority (>50% Agreement)</option>
+            <option value="strict">Strict (100% Unanimous, ≥2 Evaluators)</option>
+          </select>
+        </div>
       </div>
       <div style="display: flex; gap: 12px; flex-wrap: wrap;">
         <button class="vote-btn vote-btn-a" onclick="downloadExport('dpo')">Download DPO JSON</button>
@@ -962,6 +981,41 @@
         evalSelect.value = 'pooled';
       }
 
+      // Populate export evaluator filter
+      const expEvalSelect = document.getElementById('export-evaluator-filter');
+      if (expEvalSelect) {
+        const expSelected = expEvalSelect.value || 'all';
+        expEvalSelect.innerHTML = '<option value="all">All Evaluators</option>';
+        voters.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = v;
+          expEvalSelect.appendChild(opt);
+        });
+        if (voters.includes(expSelected)) expEvalSelect.value = expSelected;
+      }
+
+      // Fetch inter-annotator agreement if >= 2 voters
+      const agreementPill = document.getElementById('agreement-pill');
+      if (agreementPill) {
+        if (voters.length >= 2) {
+          fetch(`/api/tournaments/${currentTournament.id}/agreement`)
+            .then(res => res.ok ? res.json() : null)
+            .then(agreeData => {
+              if (agreeData && agreeData.overall_agreement_rate !== null && agreeData.shared_pairs_evaluated > 0) {
+                const pct = Math.round(agreeData.overall_agreement_rate * 100);
+                agreementPill.style.display = 'inline-block';
+                agreementPill.textContent = `Inter-Rater Agreement: ${pct}% (${agreeData.shared_pairs_evaluated} shared)`;
+              } else {
+                agreementPill.style.display = 'none';
+              }
+            })
+            .catch(() => { agreementPill.style.display = 'none'; });
+        } else {
+          agreementPill.style.display = 'none';
+        }
+      }
+
       // Calculate pooled ranks for delta calculation
       const pooledItems = pooledTourney.candidates.map(c => {
         const stat = pooledTourney.stats[c.id] || { elo: 1200, wins: 0, losses: 0, ties: 0, matches: 0 };
@@ -1183,14 +1237,25 @@
 
     async function loadExportPreview() {
       if (!currentTournament) return;
-      const res = await fetch(`/api/tournaments/${currentTournament.id}/export?format=dpo`);
+      const voter = document.getElementById('export-evaluator-filter')?.value || 'all';
+      const consensus = document.getElementById('export-consensus-filter')?.value || '';
+      let url = `/api/tournaments/${currentTournament.id}/export?format=dpo`;
+      if (voter && voter !== 'all') url += `&voter=${encodeURIComponent(voter)}`;
+      if (consensus) url += `&consensus=${encodeURIComponent(consensus)}`;
+
+      const res = await fetch(url);
       const data = await res.json();
       document.getElementById('export-preview').textContent = JSON.stringify(data.slice(0, 5), null, 2);
     }
 
     function downloadExport(format) {
       if (!currentTournament) return;
-      window.location.href = `/api/tournaments/${currentTournament.id}/export?format=${format}&download=true`;
+      const voter = document.getElementById('export-evaluator-filter')?.value || 'all';
+      const consensus = document.getElementById('export-consensus-filter')?.value || '';
+      let url = `/api/tournaments/${currentTournament.id}/export?format=${format}&download=true`;
+      if (voter && voter !== 'all') url += `&voter=${encodeURIComponent(voter)}`;
+      if (consensus) url += `&consensus=${encodeURIComponent(consensus)}`;
+      window.location.href = url;
     }
 
     function setupKeyboardShortcuts() {

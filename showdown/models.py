@@ -35,10 +35,10 @@ class Match(BaseModel):
     id_b: str
     winner: str  # 'a', 'b', 'tie', 'both_bad'
     timestamp: float = Field(default_factory=time.time)
-    elo_a_before: float
-    elo_b_before: float
-    elo_a_after: float
-    elo_b_after: float
+    elo_a_before: float = 1200.0
+    elo_b_before: float = 1200.0
+    elo_a_after: float = 1200.0
+    elo_b_after: float = 1200.0
     voter: Optional[str] = "human"
     notes: Optional[str] = None
 
