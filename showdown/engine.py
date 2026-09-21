@@ -2,6 +2,7 @@
 
 import math
 import random
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from showdown.models import Candidate, CandidateStats, Match, Tournament
 
@@ -211,9 +212,8 @@ def compute_inter_annotator_agreement(
             "message": "At least 2 distinct evaluators required to compute inter-annotator agreement.",
         }
 
-    # Map: voter -> { (c1, c2): direction } where c1 < c2
-    # direction: +1 if c1 preferred, -1 if c2 preferred, 0 if tie/both_bad
-    voter_decisions: Dict[str, Dict[Tuple[str, str], int]] = {v: {} for v in voters}
+    # Map: voter -> { (c1, c2): [directions] } where c1 < c2
+    voter_pair_history: Dict[str, Dict[Tuple[str, str], List[int]]] = {v: defaultdict(list) for v in voters}
 
     for m in matches:
         if not m.voter:
@@ -228,7 +228,13 @@ def compute_inter_annotator_agreement(
         else:
             direction = 0
 
-        voter_decisions[m.voter][pair] = direction
+        voter_pair_history[m.voter][pair].append(direction)
+
+    voter_decisions: Dict[str, Dict[Tuple[str, str], int]] = {v: {} for v in voters}
+    for v in voters:
+        for pair, dirs in voter_pair_history[v].items():
+            s = sum(dirs)
+            voter_decisions[v][pair] = 1 if s > 0 else (-1 if s < 0 else 0)
 
     evaluator_pairs = []
     total_agreements = 0
@@ -260,8 +266,8 @@ def compute_inter_annotator_agreement(
                     reversals += 1
 
             decisive = agreed + reversals
-            agreement_rate = round(agreed / decisive, 3) if decisive > 0 else 1.0
-            reversal_rate = round(reversals / decisive, 3) if decisive > 0 else 0.0
+            agreement_rate = round(agreed / decisive, 3) if decisive > 0 else None
+            reversal_rate = round(reversals / decisive, 3) if decisive > 0 else None
 
             evaluator_pairs.append({
                 "evaluator_a": v1,

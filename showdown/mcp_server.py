@@ -29,6 +29,7 @@ def showdown_create_tournament(
     tournament_id: Optional[str] = None,
     parent_ids: Optional[List[str]] = None,
     context: Optional[str] = None,
+    blinded: bool = False,
     port: int = 8000,
 ) -> Dict[str, Any]:
     """
@@ -42,6 +43,7 @@ def showdown_create_tournament(
         tournament_id: Optional custom slug or ID.
         parent_ids: Optional list of parent tournament IDs to chain sequential stages.
         context: Optional upstream context text from parent winners.
+        blinded: If True, mask candidate metadata to eliminate evaluation bias.
         port: Web server port for browser interaction URL (default 8000).
 
     Returns:
@@ -55,6 +57,7 @@ def showdown_create_tournament(
         tournament_id=tournament_id,
         parent_ids=parent_ids,
         context=context,
+        blinded=blinded,
     )
     return {
         "tournament_id": t.id,
@@ -194,8 +197,8 @@ def showdown_evolve_candidates(
     return {
         "tournament_id": tournament_id,
         "new_candidates": [c.model_dump() for c in res.new_candidates],
-        "top_performers": res.top_performers,
-        "rejected_performers": res.rejected_performers,
+        "prompt_used": res.prompt_used,
+        "summary": res.summary,
     }
 
 

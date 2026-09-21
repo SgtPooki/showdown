@@ -683,6 +683,7 @@
         renderCandidate('a', currentMatchup.candidate_a);
         renderCandidate('b', currentMatchup.candidate_b);
       }
+      updateLeaderboard();
       if (currentTournament) {
         currentTournament.blinded = blindMode;
         try {
@@ -737,12 +738,25 @@
         });
         if (!res.ok) {
           const err = await res.json();
-          alert(err.detail || 'No votes to undo.');
+          showToast(err.detail || 'No votes to undo.');
           return;
         }
         const data = await res.json();
         showToast(`Undone vote. Remaining: ${data.remaining_matches}`);
-        await loadNextMatchup();
+
+        if (data.undone_match && currentTournament && currentTournament.candidates) {
+          const candA = currentTournament.candidates.find(c => c.id === data.undone_match.id_a);
+          const candB = currentTournament.candidates.find(c => c.id === data.undone_match.id_b);
+          if (candA && candB) {
+            currentMatchup = { candidate_a: candA, candidate_b: candB };
+            renderCandidate('a', candA);
+            renderCandidate('b', candB);
+          } else {
+            await loadNextMatchup();
+          }
+        } else {
+          await loadNextMatchup();
+        }
         await updateLeaderboard();
       } catch (err) {
         console.error("Failed to undo vote", err);
@@ -1207,10 +1221,11 @@
           actionHtml = `<button class="vote-btn vote-btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="acceptWinner('${item.candidate.id}')">Accept</button>`;
         }
 
+        const displayLabel = blindMode ? `Candidate #${currentRank} (Masked)` : (item.candidate.label || item.candidate.id);
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td><strong>#${currentRank}</strong></td>
-          <td id="cell-cand-${item.candidate.id}" style="display:flex; align-items:center;"><span>${item.candidate.label || item.candidate.id}</span></td>
+          <td id="cell-cand-${item.candidate.id}" style="display:flex; align-items:center;"><span>${displayLabel}</span></td>
           <td><span class="elo-pill">${Math.round(item.stat.elo)}</span></td>
           <td>${item.stat.wins}W - ${item.stat.losses}L - ${item.stat.ties}T</td>
           <td>${item.winRate}%</td>
@@ -1385,6 +1400,9 @@
 
     function setupKeyboardShortcuts() {
       window.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        if (e.repeat) return;
+
         if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
           e.preventDefault();
           undoLastVote();
@@ -1401,7 +1419,6 @@
           return;
         }
 
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
         if (document.getElementById('view-matchup').style.display === 'none') return;
 
         if (e.key === 'z' || e.key === 'Z') {

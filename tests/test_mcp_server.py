@@ -171,3 +171,42 @@ async def test_mcp_wait_and_chain(tmp_path):
 
     finally:
         storage.data_dir = orig_dir
+
+
+@pytest.mark.anyio
+async def test_mcp_evolve_success_structure(monkeypatch, tmp_path):
+    orig_dir = storage.data_dir
+    storage.data_dir = tmp_path
+
+    try:
+        from showdown.models import EvolveResponse, Candidate
+        # Mock execute_evolution
+        def mock_execute(*args, **kwargs):
+            return EvolveResponse(
+                prompt_used="Mutate faster",
+                new_candidates=[Candidate(id="new_1", content="Mutated Candidate")],
+                summary="Synthesized preferences successfully",
+            )
+        monkeypatch.setattr("showdown.evolve.execute_evolution", mock_execute)
+
+        t_res = await server.call_tool(
+            "showdown_create_tournament",
+            {
+                "title": "Evolve MCP Arena",
+                "candidates": [{"id": "c1", "content": "A"}, {"id": "c2", "content": "B"}],
+            },
+        )
+        t_id = t_res.structured_content["result"]["tournament_id"]
+
+        evolve_res = await server.call_tool(
+            "showdown_evolve_candidates",
+            {"tournament_id": t_id, "count": 2},
+        )
+        assert evolve_res.is_error is False
+        evolve_data = evolve_res.structured_content["result"]
+        assert evolve_data["tournament_id"] == t_id
+        assert len(evolve_data["new_candidates"]) == 1
+        assert evolve_data["prompt_used"] == "Mutate faster"
+        assert evolve_data["summary"] == "Synthesized preferences successfully"
+    finally:
+        storage.data_dir = orig_dir

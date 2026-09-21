@@ -1,8 +1,8 @@
-"""Storage backend for Showdown tournaments."""
-
+import fcntl
 import json
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from showdown.models import Tournament, CandidateStats
@@ -32,6 +32,21 @@ class Storage:
     def _tournament_file(self, tournament_id: str) -> Path:
         clean_id = tournament_id.replace("/", "_").replace("\\", "_")
         return self.data_dir / f"{clean_id}.json"
+
+    def _lock_file(self, tournament_id: str) -> Path:
+        clean_id = tournament_id.replace("/", "_").replace("\\", "_")
+        return self.data_dir / f"{clean_id}.lock"
+
+    @contextmanager
+    def lock_tournament(self, tournament_id: str):
+        """Cross-process file lock for tournament mutations."""
+        lock_path = self._lock_file(tournament_id)
+        with open(lock_path, "a") as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
     def has_tournament(self, tournament_id: str) -> bool:
         return self._tournament_file(tournament_id).exists()

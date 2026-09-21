@@ -54,7 +54,6 @@ app.add_middleware(
 
 storage = Storage()
 WEB_DIR = Path(__file__).parent / "web"
-_tournament_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -104,7 +103,7 @@ def create_tournament(req: CreateTournamentRequest):
     for c in tournament.candidates:
         tournament.stats[c.id] = CandidateStats()
 
-    with _tournament_locks[t_id]:
+    with storage.lock_tournament(t_id):
         storage.save_tournament(tournament)
     return tournament
 
@@ -127,7 +126,7 @@ def get_tournament(tournament_id: str, voter: Optional[str] = None):
 
 @app.delete("/api/tournaments/{tournament_id}")
 def delete_tournament(tournament_id: str):
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         success = storage.delete_tournament(tournament_id)
     if not success:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -158,7 +157,7 @@ def get_matchup(tournament_id: str):
 
 @app.post("/api/tournaments/{tournament_id}/vote")
 def record_vote(tournament_id: str, vote: VoteRequest):
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         tournament = storage.load_tournament(tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
@@ -232,15 +231,27 @@ def record_vote(tournament_id: str, vote: VoteRequest):
 
 
 @app.post("/api/tournaments/{tournament_id}/undo")
-def undo_vote(tournament_id: str):
-    with _tournament_locks[tournament_id]:
+def undo_vote(tournament_id: str, voter: Optional[str] = None):
+    with storage.lock_tournament(tournament_id):
         tournament = storage.load_tournament(tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
         if not tournament.matches:
             raise HTTPException(status_code=400, detail="No votes to undo")
 
-        undone_match = tournament.matches.pop()
+        if voter and voter.strip().lower() not in ("all", "pooled", "*"):
+            v_clean = voter.strip()
+            idx = None
+            for i in range(len(tournament.matches) - 1, -1, -1):
+                if tournament.matches[i].voter == v_clean:
+                    idx = i
+                    break
+            if idx is None:
+                raise HTTPException(status_code=400, detail=f"No votes by '{v_clean}' to undo")
+            undone_match = tournament.matches.pop(idx)
+        else:
+            undone_match = tournament.matches.pop()
+
         tournament.stats = replay_stats(tournament.candidates, tournament.matches)
         tournament.updated_at = time.time()
         storage.save_tournament(tournament)
@@ -259,7 +270,7 @@ def undo_vote(tournament_id: str):
 
 @app.patch("/api/tournaments/{tournament_id}")
 def update_tournament(tournament_id: str, req: UpdateTournamentRequest):
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         tournament = storage.load_tournament(tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
@@ -296,7 +307,7 @@ def get_voter_consistency(tournament_id: str, voter: Optional[str] = None):
 
 @app.post("/api/tournaments/{tournament_id}/triage")
 def record_triage(tournament_id: str, req: TriageRequest):
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         tournament = storage.load_tournament(tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
@@ -313,7 +324,7 @@ def record_triage(tournament_id: str, req: TriageRequest):
 
 @app.post("/api/tournaments/{tournament_id}/candidates", response_model=Tournament)
 def add_candidates(tournament_id: str, req: AddCandidatesRequest):
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         tournament = storage.load_tournament(tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
@@ -347,7 +358,7 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         # Reload fresh tournament to avoid overwriting votes or triage recorded during generation
         fresh_tournament = storage.load_tournament(tournament_id) or tournament
         existing_ids = {c.id for c in fresh_tournament.candidates}
@@ -363,7 +374,7 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
 
 @app.post("/api/tournaments/{tournament_id}/accept")
 def accept_candidate(tournament_id: str, req: AcceptCandidateRequest):
-    with _tournament_locks[tournament_id]:
+    with storage.lock_tournament(tournament_id):
         tournament = storage.load_tournament(tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
@@ -513,6 +524,13 @@ def export_tournament(
     download: bool = False,
     jsonl: bool = False,
 ):
+    if consensus is not None and consensus not in ("strict", "majority"):
+        raise HTTPException(status_code=400, detail=f"Invalid consensus mode '{consensus}'. Must be 'strict' or 'majority'.")
+    if min_agreement is not None and not (0.0 < min_agreement <= 1.0):
+        raise HTTPException(status_code=400, detail="min_agreement must be between 0.0 and 1.0")
+    if (consensus or min_agreement is not None) and voter and voter.strip().lower() not in ("all", "pooled", "*"):
+        raise HTTPException(status_code=400, detail="Cannot combine 'voter' filter with multi-annotator 'consensus' or 'min_agreement'.")
+
     tournament = storage.load_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -534,13 +552,16 @@ def export_tournament(
                 votes_c1 = sum(1 for m in pair_matches if (m.winner == "a" and m.id_a == c1) or (m.winner == "b" and m.id_b == c1))
                 votes_c2 = sum(1 for m in pair_matches if (m.winner == "a" and m.id_a == c2) or (m.winner == "b" and m.id_b == c2))
                 total_decisive = votes_c1 + votes_c2
-                if total_decisive == 0:
+                if total_decisive < 2:
+                    continue
+                if votes_c1 == votes_c2:
+                    continue
+
+                voters_for_pair = sorted(list({m.voter for m in pair_matches if m.voter}))
+                if consensus == "strict" and (len(voters_for_pair) < 2 or (votes_c1 > 0 and votes_c2 > 0)):
                     continue
 
                 agreement_rate = max(votes_c1, votes_c2) / total_decisive
-
-                if consensus == "strict" and (total_decisive < 2 or (votes_c1 > 0 and votes_c2 > 0)):
-                    continue
                 if min_agreement is not None and agreement_rate < min_agreement:
                     continue
                 if consensus == "majority" and agreement_rate <= 0.5:

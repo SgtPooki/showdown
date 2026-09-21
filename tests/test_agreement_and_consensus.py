@@ -98,5 +98,60 @@ def test_agreement_endpoint_and_consensus_export(tmp_path):
         assert len(dpo_threshold) == 1
         assert dpo_threshold[0]["chosen_id"] == "c1"
 
+        # 5. Test invalid consensus parameter raises 400
+        import pytest
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as excinfo:
+            export_tournament(t.id, consensus="invalid_mode")
+        assert excinfo.value.status_code == 400
+        assert "Invalid consensus mode" in excinfo.value.detail
+
+        # 6. Test combining voter and consensus raises 400
+        with pytest.raises(HTTPException) as excinfo:
+            export_tournament(t.id, consensus="strict", voter="eval_1")
+        assert excinfo.value.status_code == 400
+        assert "Cannot combine 'voter' filter" in excinfo.value.detail
+
+    finally:
+        storage.data_dir = orig_dir
+
+
+def test_agreement_zero_decisive_returns_none():
+    # Arrange: shared pairs with only ties
+    matches = [
+        Match(id_a="c1", id_b="c2", winner="tie", voter="alice"),
+        Match(id_a="c1", id_b="c2", winner="both_bad", voter="bob"),
+    ]
+    res = compute_inter_annotator_agreement(matches)
+    assert len(res["evaluator_pairs"]) == 1
+    assert res["evaluator_pairs"][0]["decisive_pairs_count"] == 0
+    assert res["evaluator_pairs"][0]["agreement_rate"] is None
+    assert res["overall_agreement_rate"] is None
+
+
+def test_single_voter_cannot_form_strict_consensus(tmp_path):
+    orig_dir = storage.data_dir
+    storage.data_dir = tmp_path
+    try:
+        t_req = CreateTournamentRequest(
+            title="Single Voter Arena",
+            candidates=[Candidate(id="c1", content="One"), Candidate(id="c2", content="Two")],
+        )
+        t = create_tournament(t_req)
+        # Same voter votes twice
+        record_vote(t.id, VoteRequest(id_a="c1", id_b="c2", winner="a", voter="sole_judge"))
+        record_vote(t.id, VoteRequest(id_a="c1", id_b="c2", winner="a", voter="sole_judge"))
+
+        # Strict consensus requires >= 2 distinct evaluators
+        res_strict = export_tournament(t.id, format="dpo", consensus="strict")
+        assert len(res_strict) == 0
+
+        # Exact 50/50 split is not exported as consensus
+        record_vote(t.id, VoteRequest(id_a="c1", id_b="c2", winner="b", voter="second_judge"))
+        record_vote(t.id, VoteRequest(id_a="c1", id_b="c2", winner="b", voter="second_judge"))
+        # Now 2 votes for c1 and 2 votes for c2 (50/50 tie)
+        res_tie = export_tournament(t.id, format="dpo", consensus="majority")
+        assert len(res_tie) == 0
     finally:
         storage.data_dir = orig_dir

@@ -100,6 +100,35 @@ def test_undo_vote_recalibrates_elo(tmp_path):
     assert "No votes to undo" in excinfo.value.detail
 
 
+def test_undo_vote_per_voter(tmp_path):
+    storage.data_dir = tmp_path
+    t_req = CreateTournamentRequest(
+        title="Multi-Voter Undo",
+        candidates=[Candidate(id="c1", content="One"), Candidate(id="c2", content="Two")],
+    )
+    t = create_tournament(t_req)
+    # Alice votes first, then Bob votes
+    record_vote(t.id, VoteRequest(id_a="c1", id_b="c2", winner="a", voter="alice"))
+    record_vote(t.id, VoteRequest(id_a="c1", id_b="c2", winner="b", voter="bob"))
+
+    # Alice undos her vote specifically
+    undo_res = undo_vote(t.id, voter="alice")
+    assert undo_res["undone_match"]["voter"] == "alice"
+    assert undo_res["undone_match"]["winner"] == "a"
+    assert undo_res["remaining_matches"] == 1
+
+    # Remaining match is Bob's vote
+    t_reloaded = storage.load_tournament(t.id)
+    assert len(t_reloaded.matches) == 1
+    assert t_reloaded.matches[0].voter == "bob"
+
+    # Alice trying to undo again raises 400
+    with pytest.raises(HTTPException) as excinfo:
+        undo_vote(t.id, voter="alice")
+    assert excinfo.value.status_code == 400
+    assert "No votes by 'alice'" in excinfo.value.detail
+
+
 def test_blinded_mode_and_update_tournament(tmp_path):
     # Arrange
     storage.data_dir = tmp_path
