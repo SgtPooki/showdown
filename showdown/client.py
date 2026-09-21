@@ -182,3 +182,57 @@ def run_judge(
 
     res = judge_tournament_endpoint(tournament_id=tournament_id, req=req)
     return res.model_dump()
+
+
+def evolve_tournament(
+    tournament_id: str,
+    count: int = 5,
+    instructions: Optional[str] = None,
+    backend: Optional[str] = "auto",
+    providers: Optional[List[str]] = None,
+    mode: str = "refine",
+    wildcards: Optional[int] = None,
+    chain_mode: Optional[str] = None,
+    data_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Synthesize new candidate variations with refine, diverge, hybrid, or multi-agent fan-out."""
+    from showdown.models import EvolveRequest
+    from showdown.server import evolve_tournament_endpoint
+    import showdown.server
+
+    req = EvolveRequest(
+        count=count,
+        instructions=instructions,
+        backend=backend,
+        providers=providers,
+        mode=mode,
+        wildcards=wildcards,
+        chain_mode=chain_mode,
+    )
+
+    if data_dir:
+        storage = Storage(data_dir=data_dir)
+        original_storage = showdown.server.storage
+        showdown.server.storage = storage
+        try:
+            res = evolve_tournament_endpoint(tournament_id=tournament_id, req=req)
+            return res.model_dump()
+        finally:
+            showdown.server.storage = original_storage
+
+    res = evolve_tournament_endpoint(tournament_id=tournament_id, req=req)
+    return res.model_dump()
+
+
+def list_providers() -> List[Dict[str, Any]]:
+    """List registered agent providers and host detection status."""
+    from showdown.providers import registry
+    return [p.to_dict() for p in registry.list_all()]
+
+
+def get_provider_leaderboard(data_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Aggregate model/provider leaderboard across tournaments."""
+    from showdown.providers import compute_provider_leaderboard
+    storage = Storage(data_dir=data_dir)
+    return compute_provider_leaderboard(storage.list_tournaments())
+

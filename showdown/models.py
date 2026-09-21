@@ -164,7 +164,8 @@ class AddCandidatesRequest(BaseModel):
 class EvolveRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=20)
     instructions: Optional[str] = None
-    backend: Optional[str] = "auto"  # "auto", "claude", "codex", "openai"
+    backend: Optional[str] = "auto"  # "auto", "claude", "codex", "cursor", "omp", "openai", "vllm"
+    providers: Optional[List[str]] = None  # Multi-agent fan-out list of provider IDs
     mode: str = "refine"  # "refine", "diverge", "hybrid"
     wildcards: Optional[int] = None  # Number of exploration wildcards if mode is hybrid
     chain_mode: Optional[str] = None  # Optional override ("growth", "divergence")
@@ -177,6 +178,28 @@ class EvolveResponse(BaseModel):
     mode: str = "refine"
     refine_count: int = 0
     wildcard_count: int = 0
+    providers_used: List[str] = Field(default_factory=list)
+
+
+class ProviderInfo(BaseModel):
+    id: str
+    display_name: str
+    provider_type: str
+    model: Optional[str] = None
+    available: bool
+
+
+class ProviderLeaderboardEntry(BaseModel):
+    provider_id: str
+    display_name: str
+    elo: float
+    wins: int
+    losses: int
+    ties: int
+    matches: int
+    win_rate: float
+    accepted_winners: int
+    candidates_count: int
 
 
 class AcceptCandidateRequest(BaseModel):

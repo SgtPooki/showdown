@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from showdown.models import (
@@ -17,6 +18,7 @@ from showdown.models import (
     TriageStatus,
     Tournament,
 )
+from showdown.providers import AgentProvider, registry
 from showdown.storage import Storage
 
 
@@ -266,6 +268,8 @@ def _parse_candidates_json(
     backend_name: str,
     is_divergence: bool = False,
     is_wildcard: bool = False,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> List[Candidate]:
     """Parse JSON candidate list from model output, handling potential markdown wrappers and metadata."""
     text = raw_text.strip()
@@ -285,6 +289,11 @@ def _parse_candidates_json(
     if not isinstance(items, list):
         raise ValueError("Model output was not a JSON array")
 
+    prov_id = provider or backend_name
+    reg_p = registry.get(prov_id)
+    prov_name = reg_p.display_name if reg_p else prov_id.capitalize()
+    model_name = model or (reg_p.model if reg_p else None)
+
     new_cands = []
     for i, item in enumerate(items):
         cid = f"gen{next_gen}_{uuid.uuid4().hex[:6]}"
@@ -295,8 +304,12 @@ def _parse_candidates_json(
             meta: Dict[str, Any] = {
                 "lineage": "diverged" if is_divergence else "evolved",
                 "backend": backend_name,
+                "provider": prov_id,
+                "provider_name": prov_name,
                 "created_at": time.time(),
             }
+            if model_name:
+                meta["model"] = model_name
             if differs_by:
                 meta["differs_by"] = differs_by
             if is_wildcard:
@@ -316,69 +329,9 @@ def _parse_candidates_json(
 
 
 def call_generation_backend(prompt: str, backend: str) -> str:
-    """Execute LLM generation backend and return raw text output."""
-    if backend == "claude" and shutil.which("claude"):
-        res = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"Claude CLI failed: {res.stderr.strip()}")
-        return res.stdout.strip()
-
-    elif backend in ("omp", "homelab", "homelab-default") and shutil.which("omp"):
-        model_name = os.environ.get("SHOWDOWN_HOMELAB_MODEL", "homelab-default")
-        res = subprocess.run(
-            ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"OMP Homelab CLI failed: {res.stderr.strip()}")
-        return res.stdout.strip()
-
-    elif backend == "codex" and shutil.which("codex"):
-        res = subprocess.run(
-            ["codex", "exec", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"Codex CLI failed: {res.stderr.strip()}")
-        return res.stdout.strip()
-
-    elif backend == "openai":
-        import urllib.request
-
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        payload = {
-            "model": os.environ.get("SHOWDOWN_MODEL", "gpt-4o-mini"),
-            "messages": [
-                {"role": "system", "content": "You are a precise preference optimization assistant that outputs only valid JSON."},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.7,
-        }
-        req = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"].strip()
-
-    raise RuntimeError(
-        f"No suitable generation backend found for '{backend}'. Ensure 'claude', 'codex', or OPENAI_API_KEY is available."
-    )
+    """Execute LLM generation backend using provider registry and return raw text output."""
+    provider = registry.resolve_provider(backend)
+    return provider.call(prompt)
 
 
 def execute_evolution(
@@ -386,12 +339,13 @@ def execute_evolution(
     count: int = 5,
     instructions: Optional[str] = None,
     backend: Optional[str] = "auto",
+    providers: Optional[List[str]] = None,
     mode: str = "refine",
     wildcards: Optional[int] = None,
     chain_mode: Optional[str] = None,
     storage: Optional[Storage] = None,
 ) -> EvolveResponse:
-    """Run candidate generation through available CLI or API backends with refine/diverge/hybrid support."""
+    """Run candidate generation through available CLI or API backends with refine/diverge/hybrid and multi-agent fan-out support."""
     # Resolve upstream context if parent stages exist
     upstream_context = None
     if storage:
@@ -401,25 +355,136 @@ def execute_evolution(
     existing_gens = [c.generation for c in tournament.candidates if hasattr(c, "generation")]
     next_gen = (max(existing_gens) + 1) if existing_gens else 2
 
-    # Choose backend
-    resolved_backend = backend or os.environ.get("SHOWDOWN_BACKEND") or "auto"
-    if resolved_backend == "auto":
-        if os.environ.get("SHOWDOWN_PREFER_HOMELAB") and shutil.which("omp"):
-            resolved_backend = "omp"
-        elif shutil.which("claude"):
-            resolved_backend = "claude"
-        elif shutil.which("omp"):
-            resolved_backend = "omp"
-        elif shutil.which("codex"):
-            resolved_backend = "codex"
-        elif os.environ.get("OPENAI_API_KEY"):
-            resolved_backend = "openai"
-        else:
-            resolved_backend = "cli_fallback"
-
     resolved_mode = mode.lower() if mode else "refine"
     if resolved_mode not in ("refine", "diverge", "hybrid"):
         resolved_mode = "refine"
+
+    # MULTI-AGENT FAN-OUT PATH
+    if providers and len(providers) > 1:
+        resolved_providers: List[AgentProvider] = []
+        for pid in providers:
+            p = registry.get(pid)
+            if p and p.is_available():
+                resolved_providers.append(p)
+            elif p:
+                raise RuntimeError(f"Requested provider '{pid}' is not available on host.")
+            else:
+                raise ValueError(f"Unknown provider '{pid}'. Available: {[pr.id for pr in registry.list_available()]}")
+
+        if not resolved_providers:
+            raise RuntimeError(f"None of the requested providers {providers} are available.")
+
+        # Partition target count across providers
+        n_prov = len(resolved_providers)
+        counts_per_prov = [count // n_prov + (1 if i < (count % n_prov) else 0) for i in range(n_prov)]
+
+        # If hybrid, allocate total wildcards across providers
+        total_wildcards = (
+            min(max(1, wildcards), count)
+            if wildcards is not None
+            else (max(1, count // 3) if resolved_mode == "hybrid" else 0)
+        )
+        wildcards_remaining = total_wildcards if resolved_mode == "hybrid" else 0
+
+        provider_tasks: List[Tuple[AgentProvider, int, int]] = []
+        for i, prov in enumerate(resolved_providers):
+            p_total = counts_per_prov[i]
+            if p_total == 0:
+                continue
+            if resolved_mode == "diverge":
+                provider_tasks.append((prov, 0, p_total))
+            elif resolved_mode == "refine":
+                provider_tasks.append((prov, p_total, 0))
+            else:  # hybrid
+                w_alloc = min(p_total, wildcards_remaining)
+                r_alloc = p_total - w_alloc
+                wildcards_remaining -= w_alloc
+                provider_tasks.append((prov, r_alloc, w_alloc))
+
+        def _run_single_provider(prov: AgentProvider, r_count: int, w_count: int):
+            prov_cands: List[Candidate] = []
+            prov_prompts: List[str] = []
+
+            if r_count > 0:
+                r_prompt, _ = build_evolution_prompt(
+                    tournament=tournament,
+                    count=r_count,
+                    instructions=instructions,
+                    mode="refine",
+                    chain_mode=chain_mode,
+                    upstream_context=upstream_context,
+                )
+                r_raw = call_generation_backend(r_prompt, prov.id)
+                r_cands = _parse_candidates_json(
+                    r_raw,
+                    next_gen,
+                    backend_name=prov.id,
+                    is_divergence=False,
+                    is_wildcard=False,
+                    provider=prov.id,
+                    model=prov.model,
+                )
+                prov_cands.extend(r_cands)
+                prov_prompts.append(r_prompt)
+
+            if w_count > 0:
+                w_prompt, _ = build_evolution_prompt(
+                    tournament=tournament,
+                    count=w_count,
+                    instructions=instructions,
+                    mode="diverge",
+                    chain_mode=chain_mode,
+                    upstream_context=upstream_context,
+                )
+                w_raw = call_generation_backend(w_prompt, prov.id)
+                w_cands = _parse_candidates_json(
+                    w_raw,
+                    next_gen,
+                    backend_name=prov.id,
+                    is_divergence=True,
+                    is_wildcard=True,
+                    provider=prov.id,
+                    model=prov.model,
+                )
+                prov_cands.extend(w_cands)
+                prov_prompts.append(w_prompt)
+
+            return prov.id, prov_cands, prov_prompts
+
+        combined_cands: List[Candidate] = []
+        all_prompts: List[str] = []
+        with ThreadPoolExecutor(max_workers=min(len(provider_tasks), 8)) as executor:
+            futures = [
+                executor.submit(_run_single_provider, prov, r_cnt, w_cnt)
+                for prov, r_cnt, w_cnt in provider_tasks
+            ]
+            for fut in as_completed(futures):
+                pid, cands, p_list = fut.result()
+                combined_cands.extend(cands)
+                all_prompts.extend(p_list)
+
+        refine_actual = sum(1 for c in combined_cands if not c.metadata.get("wildcard"))
+        wildcard_actual = sum(1 for c in combined_cands if c.metadata.get("wildcard"))
+        prov_ids = [p.id for p in resolved_providers]
+        summary = (
+            f"Multi-agent fan-out across {len(prov_ids)} providers ({', '.join(prov_ids)}): "
+            f"generated {len(combined_cands)} candidates ({refine_actual} refined, {wildcard_actual} wildcards)."
+        )
+
+        return EvolveResponse(
+            prompt_used="\n\n--- [FAN-OUT MULTI-AGENT] ---\n\n".join(all_prompts),
+            new_candidates=combined_cands,
+            summary=summary,
+            mode=resolved_mode,
+            refine_count=refine_actual,
+            wildcard_count=wildcard_actual,
+            providers_used=prov_ids,
+        )
+
+    # SINGLE PROVIDER PATH
+    target_backend = providers[0] if (providers and len(providers) == 1) else (backend or "auto")
+    provider_inst = registry.resolve_provider(target_backend)
+    resolved_backend = provider_inst.id
 
     if resolved_mode == "refine":
         full_prompt, summary = build_evolution_prompt(
@@ -431,14 +496,23 @@ def execute_evolution(
             upstream_context=upstream_context,
         )
         raw_output = call_generation_backend(full_prompt, resolved_backend)
-        new_cands = _parse_candidates_json(raw_output, next_gen, resolved_backend, is_divergence=False, is_wildcard=False)
+        new_cands = _parse_candidates_json(
+            raw_output,
+            next_gen,
+            backend_name=resolved_backend,
+            is_divergence=False,
+            is_wildcard=False,
+            provider=resolved_backend,
+            model=provider_inst.model,
+        )
         return EvolveResponse(
             prompt_used=full_prompt,
             new_candidates=new_cands,
-            summary=f"{summary} Generated {len(new_cands)} refined candidates via {resolved_backend}.",
+            summary=f"{summary} Generated {len(new_cands)} refined candidates via {provider_inst.display_name}.",
             mode="refine",
             refine_count=len(new_cands),
             wildcard_count=0,
+            providers_used=[resolved_backend],
         )
 
     elif resolved_mode == "diverge":
@@ -451,14 +525,23 @@ def execute_evolution(
             upstream_context=upstream_context,
         )
         raw_output = call_generation_backend(full_prompt, resolved_backend)
-        new_cands = _parse_candidates_json(raw_output, next_gen, resolved_backend, is_divergence=True, is_wildcard=True)
+        new_cands = _parse_candidates_json(
+            raw_output,
+            next_gen,
+            backend_name=resolved_backend,
+            is_divergence=True,
+            is_wildcard=True,
+            provider=resolved_backend,
+            model=provider_inst.model,
+        )
         return EvolveResponse(
             prompt_used=full_prompt,
             new_candidates=new_cands,
-            summary=f"{summary} Generated {len(new_cands)} structural divergence wildcards via {resolved_backend}.",
+            summary=f"{summary} Generated {len(new_cands)} structural divergence wildcards via {provider_inst.display_name}.",
             mode="diverge",
             refine_count=0,
             wildcard_count=len(new_cands),
+            providers_used=[resolved_backend],
         )
 
     else:  # hybrid mode
@@ -486,7 +569,15 @@ def execute_evolution(
             )
             prompts.append(f"[Refinement Prompt]:\n{r_prompt}")
             r_raw = call_generation_backend(r_prompt, resolved_backend)
-            r_cands = _parse_candidates_json(r_raw, next_gen, resolved_backend, is_divergence=False, is_wildcard=False)
+            r_cands = _parse_candidates_json(
+                r_raw,
+                next_gen,
+                backend_name=resolved_backend,
+                is_divergence=False,
+                is_wildcard=False,
+                provider=resolved_backend,
+                model=provider_inst.model,
+            )
             combined_cands.extend(r_cands)
             refine_actual = len(r_cands)
             summaries.append(f"{refine_actual} refinements")
@@ -502,13 +593,21 @@ def execute_evolution(
             )
             prompts.append(f"[Divergence Wildcards Prompt]:\n{w_prompt}")
             w_raw = call_generation_backend(w_prompt, resolved_backend)
-            w_cands = _parse_candidates_json(w_raw, next_gen, resolved_backend, is_divergence=True, is_wildcard=True)
+            w_cands = _parse_candidates_json(
+                w_raw,
+                next_gen,
+                backend_name=resolved_backend,
+                is_divergence=True,
+                is_wildcard=True,
+                provider=resolved_backend,
+                model=provider_inst.model,
+            )
             combined_cands.extend(w_cands)
             wildcard_actual = len(w_cands)
             summaries.append(f"{wildcard_actual} wildcards")
 
         full_prompt = "\n\n" + ("=" * 40) + "\n\n".join(prompts)
-        summary = f"Hybrid generation via {resolved_backend}: {', '.join(summaries)}."
+        summary = f"Hybrid generation via {provider_inst.display_name}: {', '.join(summaries)}."
         return EvolveResponse(
             prompt_used=full_prompt,
             new_candidates=combined_cands,
@@ -516,4 +615,5 @@ def execute_evolution(
             mode="hybrid",
             refine_count=refine_actual,
             wildcard_count=wildcard_actual,
+            providers_used=[resolved_backend],
         )

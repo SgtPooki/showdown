@@ -19,6 +19,7 @@ from showdown.models import (
     TaskType,
     Tournament,
 )
+from showdown.providers import registry
 from showdown.storage import Storage
 
 DEFAULT_RUBRICS: Dict[str, str] = {
@@ -60,21 +61,27 @@ DEFAULT_RUBRICS: Dict[str, str] = {
 
 
 def resolve_judge_backend(backend: Optional[str] = None) -> str:
-    """Resolve the judge backend to an available executable or API."""
-    resolved = backend or os.environ.get("SHOWDOWN_BACKEND") or "auto"
-    if resolved == "auto":
-        if os.environ.get("SHOWDOWN_PREFER_HOMELAB") and shutil.which("omp"):
-            return "omp"
-        elif shutil.which("claude"):
-            return "claude"
-        elif shutil.which("omp"):
-            return "omp"
-        elif shutil.which("codex"):
-            return "codex"
-        elif os.environ.get("OPENAI_API_KEY"):
-            return "openai"
-        return "omp" if shutil.which("omp") else "cli_fallback"
-    return resolved
+    """Resolve the judge backend to an available provider ID."""
+    try:
+        provider = registry.resolve_provider(backend)
+        return provider.id
+    except Exception:
+        resolved = backend or os.environ.get("SHOWDOWN_BACKEND") or "auto"
+        if resolved == "auto":
+            if os.environ.get("SHOWDOWN_PREFER_HOMELAB") and shutil.which("omp"):
+                return "omp"
+            elif shutil.which("claude"):
+                return "claude"
+            elif shutil.which("omp"):
+                return "omp"
+            elif shutil.which("codex"):
+                return "codex"
+            elif shutil.which("cursor-agent"):
+                return "cursor"
+            elif os.environ.get("OPENAI_API_KEY"):
+                return "openai"
+            return "omp" if shutil.which("omp") else "cli_fallback"
+        return resolved
 
 
 def build_judge_prompt(
@@ -181,75 +188,91 @@ def parse_judge_output(raw_output: str) -> Tuple[str, str]:
 
 def call_judge_backend(prompt: str, backend: str = "auto") -> str:
     """Execute evaluation prompt through the selected model backend."""
-    resolved = resolve_judge_backend(backend)
+    try:
+        provider = registry.resolve_provider(backend)
+        return provider.call(prompt)
+    except Exception as e:
+        # Fallback to direct resolution if provider fails or unexpected backend
+        resolved = resolve_judge_backend(backend)
 
-    if resolved == "claude" and shutil.which("claude"):
-        res = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"Claude CLI judge failed: {res.stderr.strip()}")
-        return res.stdout.strip()
+        if resolved == "claude" and shutil.which("claude"):
+            res = subprocess.run(
+                ["claude", "-p", prompt],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(f"Claude CLI judge failed: {res.stderr.strip()}")
+            return res.stdout.strip()
 
-    elif resolved in ("omp", "homelab", "homelab-default") and shutil.which("omp"):
-        model_name = os.environ.get("SHOWDOWN_HOMELAB_MODEL", "homelab-default")
-        res = subprocess.run(
-            ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"OMP Homelab CLI judge failed: {res.stderr.strip()}")
-        return res.stdout.strip()
+        elif resolved in ("omp", "homelab", "homelab-default") and shutil.which("omp"):
+            model_name = os.environ.get("SHOWDOWN_HOMELAB_MODEL", "homelab-default")
+            res = subprocess.run(
+                ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", prompt],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(f"OMP Homelab CLI judge failed: {res.stderr.strip()}")
+            return res.stdout.strip()
 
-    elif resolved == "codex" and shutil.which("codex"):
-        res = subprocess.run(
-            ["codex", "exec", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"Codex CLI judge failed: {res.stderr.strip()}")
-        return res.stdout.strip()
+        elif resolved == "codex" and shutil.which("codex"):
+            res = subprocess.run(
+                ["codex", "exec", prompt],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(f"Codex CLI judge failed: {res.stderr.strip()}")
+            return res.stdout.strip()
 
-    elif resolved == "openai":
-        import urllib.request
+        elif resolved == "cursor" and shutil.which("cursor-agent"):
+            res = subprocess.run(
+                ["cursor-agent", "-p", "--output-format", "text", prompt],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(f"Cursor CLI judge failed: {res.stderr.strip()}")
+            return res.stdout.strip()
 
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        model = os.environ.get("SHOWDOWN_MODEL", "gpt-4o-mini")
+        elif resolved == "openai":
+            import urllib.request
 
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a precise LLM evaluation judge that outputs JSON comparisons.",
+            base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            model = os.environ.get("SHOWDOWN_MODEL", "gpt-4o-mini")
+
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a precise LLM evaluation judge that outputs JSON comparisons.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.0,
+            }
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
                 },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.0,
-        }
-        req = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"].strip()
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data["choices"][0]["message"]["content"].strip()
 
-    raise RuntimeError(
-        f"No suitable execution backend found for judge '{resolved}'. Ensure 'claude', 'omp', 'codex', or OPENAI_API_KEY is available."
-    )
+        raise RuntimeError(
+            f"No suitable execution backend found for judge '{resolved}' (error: {e}). Ensure 'claude', 'omp', 'codex', 'cursor-agent', or OPENAI_API_KEY is available."
+        )
 
 
 def evaluate_pair(

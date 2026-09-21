@@ -43,10 +43,13 @@ from showdown.models import (
     VoteRequest,
     JudgeRequest,
     JudgeResponse,
+    ProviderInfo,
+    ProviderLeaderboardEntry,
     StepAnnotation,
     StepAnnotationRequest,
     StepAnnotationTag,
 )
+from showdown.providers import compute_provider_leaderboard, registry
 from showdown.storage import Storage
 
 app = FastAPI(title="Showdown Arena", description="Minimalist Human & LLM Output Ranking Arena")
@@ -495,6 +498,7 @@ def evolve_tournament_endpoint(tournament_id: str, req: EvolveRequest):
             count=req.count,
             instructions=req.instructions,
             backend=req.backend,
+            providers=req.providers,
             mode=req.mode or "refine",
             wildcards=req.wildcards,
             chain_mode=req.chain_mode,
@@ -818,3 +822,17 @@ def export_all(
         return Response(content=body, media_type=media_type)
 
     return data
+
+
+@app.get("/api/providers", response_model=List[ProviderInfo])
+def list_providers():
+    """List all registered agent providers and their host availability."""
+    return [ProviderInfo(**p.to_dict()) for p in registry.list_all()]
+
+
+@app.get("/api/providers/leaderboard", response_model=List[ProviderLeaderboardEntry])
+def get_provider_leaderboard():
+    """Cross-tournament model/provider leaderboard based on historical matches."""
+    tournaments = storage.list_tournaments()
+    return compute_provider_leaderboard(tournaments)
+

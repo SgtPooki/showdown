@@ -180,6 +180,8 @@ def showdown_evolve_candidates(
     tournament_id: str,
     count: int = 5,
     instructions: Optional[str] = None,
+    backend: Optional[str] = "auto",
+    providers: Optional[List[str]] = None,
     mode: str = "refine",
     wildcards: Optional[int] = None,
     chain_mode: Optional[str] = None,
@@ -191,6 +193,8 @@ def showdown_evolve_candidates(
         tournament_id: ID of the tournament.
         count: Number of mutated candidates to generate (default 5).
         instructions: Optional additional creative direction for mutation.
+        backend: Optional single backend fallback ('claude', 'omp', 'codex', 'cursor', 'openai').
+        providers: Optional list of provider IDs for multi-agent fan-out generation (e.g. ['claude', 'codex', 'omp']).
         mode: Evolution mode: 'refine' (continuity/growth), 'diverge' (structural novelty), or 'hybrid' (split).
         wildcards: Number of exploration wildcards if mode is 'hybrid'.
         chain_mode: Chaining strategy override: 'growth' or 'divergence'.
@@ -204,6 +208,8 @@ def showdown_evolve_candidates(
         req=EvolveRequest(
             count=count,
             instructions=instructions,
+            backend=backend,
+            providers=providers,
             mode=mode,
             wildcards=wildcards,
             chain_mode=chain_mode,
@@ -217,6 +223,7 @@ def showdown_evolve_candidates(
         "mode": res.mode,
         "refine_count": res.refine_count,
         "wildcard_count": res.wildcard_count,
+        "providers_used": res.providers_used,
     }
 
 
@@ -482,6 +489,43 @@ def showdown_annotate_step(
         return annotate_candidate_step(tournament_id, candidate_id, step_index, req)
     except Exception as e:
         return {"error": str(e)}
+
+
+@server.tool()
+def showdown_list_providers() -> Dict[str, Any]:
+    """
+    List all registered LLM agent providers and their host availability status.
+
+    Returns:
+        List of providers with provider ID, display name, type, and availability.
+    """
+    from showdown.providers import registry
+    providers = [p.to_dict() for p in registry.list_all()]
+    return {
+        "providers": providers,
+        "available_count": sum(1 for p in providers if p["available"]),
+        "total_count": len(providers),
+    }
+
+
+@server.tool()
+def showdown_get_provider_leaderboard() -> Dict[str, Any]:
+    """
+    Retrieve aggregate model and provider performance leaderboard across all tournaments.
+
+    Returns:
+        Ranked list of providers with Elo ratings, win rates, match counts, and accepted selections.
+    """
+    from showdown.providers import compute_provider_leaderboard
+    from showdown.storage import Storage
+
+    storage_instance = Storage()
+    tournaments = storage_instance.list_tournaments()
+    entries = compute_provider_leaderboard(tournaments)
+    return {
+        "leaderboard": entries,
+        "total_tournaments": len(tournaments),
+    }
 
 
 def run_mcp_server(transport: str = "stdio", data_dir: Optional[str] = None) -> None:

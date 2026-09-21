@@ -139,7 +139,8 @@ def evolve(
     mode: str = typer.Option("refine", "--mode", "-m", help="Evolution mode: 'refine', 'diverge', or 'hybrid'"),
     wildcards: Optional[int] = typer.Option(None, "--wildcards", "-w", help="Number of exploration wildcards if mode is hybrid"),
     instructions: Optional[str] = typer.Option(None, "--instructions", "-i", help="Additional creative guidance or constraints"),
-    backend: Optional[str] = typer.Option("auto", "--backend", "-b", help="LLM backend: 'auto', 'claude', 'omp', 'codex', 'openai'"),
+    backend: Optional[str] = typer.Option("auto", "--backend", "-b", help="LLM backend: 'auto', 'claude', 'omp', 'codex', 'cursor', 'openai'"),
+    provider: Optional[List[str]] = typer.Option(None, "--provider", "-P", help="Specific provider(s) for multi-agent fan-out (can be repeated)"),
 ):
     """Synthesize new candidate variations with preference learning, divergence, or hybrid novelty injection."""
     from showdown.models import EvolveRequest
@@ -149,16 +150,20 @@ def evolve(
         count=count,
         instructions=instructions,
         backend=backend,
+        providers=provider,
         mode=mode,
         wildcards=wildcards,
     )
     res = evolve_tournament_endpoint(tournament_id, req)
     console.print(f"[bold green]Evolution successful ({res.mode} mode):[/bold green] [cyan]{len(res.new_candidates)} new candidates added[/cyan]")
+    if res.providers_used:
+        console.print(f"Providers used: [bold magenta]{', '.join(res.providers_used)}[/bold magenta]")
     console.print(f"Summary: [dim]{res.summary}[/dim]")
     for c in res.new_candidates:
         wildcard_tag = " [magenta][🎲 Wildcard][/magenta]" if c.metadata.get("wildcard") else ""
+        provider_tag = f" [cyan][{c.metadata.get('provider_name') or c.metadata.get('provider')}][/cyan]" if c.metadata.get("provider") else ""
         differs = f" - [dim]{c.metadata.get('differs_by')}[/dim]" if c.metadata.get("differs_by") else ""
-        console.print(f"  • [bold]{c.label or c.id}[/bold]{wildcard_tag}{differs}")
+        console.print(f"  • [bold]{c.label or c.id}[/bold]{provider_tag}{wildcard_tag}{differs}")
 
 
 @app.command()
@@ -447,6 +452,62 @@ def mcp(
     """Run the Showdown Model Context Protocol (MCP) server for agent IDE and CLI integration."""
     from showdown.mcp_server import run_mcp_server
     run_mcp_server(transport=transport, data_dir=data_dir)
+
+
+@app.command()
+def providers():
+    """List all registered agent providers and host detection status."""
+    from showdown.providers import registry
+
+    table = Table(title="Agent Providers & Host Status")
+    table.add_column("ID", style="cyan")
+    table.add_column("Display Name", style="white")
+    table.add_column("Type", style="magenta")
+    table.add_column("Model", style="dim")
+    table.add_column("Available", justify="center")
+
+    for p in registry.list_all():
+        avail = "[green]✓ Ready[/green]" if p.is_available() else "[red]✗ Not Found[/red]"
+        table.add_row(p.id, p.display_name, p.provider_type, p.model or "-", avail)
+
+    console.print(table)
+
+
+@app.command()
+def leaderboard():
+    """Display cross-model/provider leaderboard based on historical tournament matches."""
+    from showdown.providers import compute_provider_leaderboard
+    from showdown.storage import Storage
+
+    storage = Storage()
+    tournaments = storage.list_tournaments()
+    entries = compute_provider_leaderboard(tournaments)
+
+    if not entries:
+        console.print("[yellow]No cross-provider matches recorded yet. Run tournaments with multi-agent fan-out or multiple providers to populate leaderboard.[/yellow]")
+        return
+
+    table = Table(title="Agent Model / Provider Leaderboard")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Elo", justify="right", style="bold yellow")
+    table.add_column("Win Rate", justify="right", style="green")
+    table.add_column("Record (W-L-T)", justify="center", style="white")
+    table.add_column("Matches", justify="right", style="blue")
+    table.add_column("Candidates", justify="right", style="dim")
+    table.add_column("Accepted", justify="right", style="bold green")
+
+    for e in entries:
+        table.add_row(
+            e["display_name"],
+            f"{e['elo']:.1f}",
+            f"{e['win_rate']:.1f}%",
+            f"{e['wins']}W-{e['losses']}L-{e['ties']}T",
+            str(e["matches"]),
+            str(e["candidates_count"]),
+            str(e["accepted_winners"]),
+        )
+
+    console.print(table)
 
 
 if __name__ == "__main__":

@@ -754,11 +754,18 @@
               <option value="hybrid">Hybrid (Split Refine + Wildcards)</option>
             </select>
           </div>
-          <div id="box-evolve-wildcards" style="display: none; width: 105px; flex-direction: column; gap: 6px;">
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">PROVIDER / AGENT</label>
+            <select id="evolve-provider" style="width: 100%; padding: 8px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;">
+              <option value="auto">Auto (Host Priority)</option>
+              <option value="fanout:all">⚡ Fan-Out: All Available Agents</option>
+            </select>
+          </div>
+          <div id="box-evolve-wildcards" style="display: none; width: 90px; flex-direction: column; gap: 6px;">
             <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">WILDCARDS</label>
             <input type="number" id="evolve-wildcards" value="2" min="1" max="10" style="width: 100%; padding: 7px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
           </div>
-          <div style="width: 80px; display: flex; flex-direction: column; gap: 6px;">
+          <div style="width: 75px; display: flex; flex-direction: column; gap: 6px;">
             <label style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);">COUNT</label>
             <input type="number" id="evolve-count" value="5" min="1" max="15" style="width: 100%; padding: 7px; background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px;" />
           </div>
@@ -1491,10 +1498,43 @@
       }
     }
 
+    let availableProvidersList = [];
+
+    async function loadProvidersForModal() {
+      try {
+        const res = await fetch('/api/providers');
+        if (!res.ok) return;
+        availableProvidersList = await res.json();
+        const select = document.getElementById('evolve-provider');
+        if (!select) return;
+
+        const currentVal = select.value;
+        select.innerHTML = `
+          <option value="auto">Auto (Host Priority)</option>
+          <option value="fanout:all">⚡ Fan-Out: All Available Agents</option>
+        `;
+
+        const readyProviders = availableProvidersList.filter(p => p.available);
+        readyProviders.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.display_name} (${p.provider_type.toUpperCase()})`;
+          select.appendChild(opt);
+        });
+
+        if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+          select.value = currentVal;
+        }
+      } catch (err) {
+        console.warn("Failed to load providers list", err);
+      }
+    }
+
     function openEvolveModal() {
       document.getElementById('evolve-modal').style.display = 'flex';
       document.getElementById('evolve-status').textContent = '';
       onEvolveModeChange();
+      loadProvidersForModal();
     }
 
     function closeEvolveModal() {
@@ -1509,22 +1549,45 @@
       const instructions = document.getElementById('evolve-instructions').value.trim() || null;
       const mode = document.getElementById('evolve-mode').value || 'refine';
       const wildcards = mode === 'hybrid' ? (parseInt(document.getElementById('evolve-wildcards').value, 10) || 2) : null;
+      const provVal = document.getElementById('evolve-provider')?.value || 'auto';
+
+      let requestBackend = 'auto';
+      let requestProviders = null;
+
+      if (provVal === 'fanout:all') {
+        const readyIds = availableProvidersList.filter(p => p.available).map(p => p.id);
+        if (readyIds.length > 1) {
+          requestProviders = readyIds;
+        } else if (readyIds.length === 1) {
+          requestBackend = readyIds[0];
+        } else {
+          requestBackend = 'auto';
+        }
+      } else if (provVal && provVal !== 'auto') {
+        requestBackend = provVal;
+      }
 
       btn.disabled = true;
       btn.textContent = 'Generating...';
-      statusEl.textContent = `Synthesizing ${mode} candidates...`;
+      const statusTarget = requestProviders ? `fan-out across ${requestProviders.length} agents` : (requestBackend || mode);
+      statusEl.textContent = `Synthesizing ${mode} candidates via ${statusTarget}...`;
 
       try {
+        const payload = {
+          count: count,
+          instructions: instructions,
+          backend: requestBackend,
+          mode: mode,
+          wildcards: wildcards
+        };
+        if (requestProviders) {
+          payload.providers = requestProviders;
+        }
+
         const res = await fetch(`/api/tournaments/${currentTournament.id}/evolve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            count: count,
-            instructions: instructions,
-            backend: 'auto',
-            mode: mode,
-            wildcards: wildcards
-          })
+          body: JSON.stringify(payload)
         });
 
         if (!res.ok) {
@@ -1536,7 +1599,8 @@
         const modeLabel = data.mode === 'hybrid'
           ? `Hybrid (${data.refine_count} refined, ${data.wildcard_count} wildcards)`
           : (data.mode === 'diverge' ? 'Divergence' : 'Refinement');
-        statusEl.textContent = `Success: Added ${data.new_candidates.length} candidates (${modeLabel})!`;
+        const provLabel = data.providers_used && data.providers_used.length > 0 ? ` [${data.providers_used.join(', ')}]` : '';
+        statusEl.textContent = `Success: Added ${data.new_candidates.length} candidates (${modeLabel})${provLabel}!`;
         await onTournamentChange(currentTournament.id);
         setTimeout(() => {
           closeEvolveModal();
@@ -1780,12 +1844,20 @@
         const displayLabel = blindMode ? `Candidate #${currentRank} (Masked)` : (item.candidate.label || item.candidate.id);
         let badgeHtml = '';
         if (!blindMode && item.candidate.metadata) {
+          let provBadge = '';
+          if (item.candidate.metadata.provider) {
+            const pLabel = item.candidate.metadata.provider_name || item.candidate.metadata.provider;
+            provBadge = `<span style="background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.4); color: #38bdf8; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace;" title="Generated by ${pLabel}">🤖 ${pLabel}</span>`;
+          }
+
           if (item.candidate.metadata.wildcard || item.candidate.metadata.lineage === 'diverged') {
             const differs = item.candidate.metadata.differs_by ? ` title="${item.candidate.metadata.differs_by.replace(/"/g, '&quot;')}"` : '';
-            badgeHtml = `<span style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace; cursor: help;"${differs}>🎲 Wildcard</span>`;
+            badgeHtml = `${provBadge}<span style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace; cursor: help;"${differs}>🎲 Wildcard</span>`;
           } else if (item.candidate.metadata.lineage === 'evolved') {
             const differs = item.candidate.metadata.differs_by ? ` title="${item.candidate.metadata.differs_by.replace(/"/g, '&quot;')}"` : '';
-            badgeHtml = `<span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace; cursor: help;"${differs}>🧬 Evolved</span>`;
+            badgeHtml = `${provBadge}<span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; padding: 2px 7px; border-radius: 9999px; font-size: 11px; margin-left: 8px; font-family: 'JetBrains Mono', monospace; cursor: help;"${differs}>🧬 Evolved</span>`;
+          } else if (provBadge) {
+            badgeHtml = provBadge;
           }
         }
 
