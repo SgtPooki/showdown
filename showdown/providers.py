@@ -26,11 +26,11 @@ class AgentProvider(ABC):
         pass
 
     @abstractmethod
-    def generate(self, prompt: str, timeout: int = 120) -> str:
+    def generate(self, prompt: str, timeout: int = 240) -> str:
         """Invoke agent provider with prompt and return raw text output."""
         pass
 
-    def call(self, prompt: str, timeout: int = 120) -> str:
+    def call(self, prompt: str, timeout: int = 240) -> str:
         """Alias for generate() for backwards compatibility."""
         return self.generate(prompt, timeout=timeout)
 
@@ -62,6 +62,7 @@ class ClaudeCliProvider(AgentProvider):
             ["claude", "-p", prompt],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=timeout,
         )
         if res.returncode != 0:
@@ -90,6 +91,7 @@ class CodexCliProvider(AgentProvider):
             ["codex", "exec", prompt],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=timeout,
         )
         if res.returncode != 0:
@@ -106,21 +108,26 @@ class CursorProvider(AgentProvider):
     provider_type = "cli"
 
     def __init__(self, model: Optional[str] = None):
-        self.model = model or os.environ.get("SHOWDOWN_CURSOR_MODEL", "cursor-default")
+        self.model = model or os.environ.get("SHOWDOWN_CURSOR_MODEL", "gemini-3-flash")
 
     def is_available(self) -> bool:
         return shutil.which("cursor-agent") is not None
 
-    def generate(self, prompt: str, timeout: int = 120) -> str:
+    def generate(self, prompt: str, timeout: int = 240) -> str:
         if not self.is_available():
             raise RuntimeError("Cursor Agent CLI ('cursor-agent') not found in PATH")
-        cmd = ["cursor-agent", "-p", "--output-format", "text", prompt]
-        if self.model and self.model != "cursor-default":
+        cmd = ["cursor-agent", "-p", "--mode", "ask", "--output-format", "text"]
+        api_key = os.environ.get("CURSOR_API_KEY")
+        if api_key:
+            cmd.extend(["--api-key", api_key])
+        if self.model:
             cmd.extend(["--model", self.model])
+        cmd.append(prompt)
         res = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=timeout,
         )
         if res.returncode != 0:
@@ -150,6 +157,7 @@ class OmpProvider(AgentProvider):
             ["omp", "-p", f"--model={model_name}", "--no-session", "--no-tools", prompt],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=timeout,
         )
         if res.returncode != 0:
@@ -158,6 +166,39 @@ class OmpProvider(AgentProvider):
 
 
 OmpCliProvider = OmpProvider
+
+
+class AgyProvider(AgentProvider):
+    id = "agy"
+    display_name = "Antigravity CLI (agy)"
+    provider_type = "cli"
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or os.environ.get("SHOWDOWN_AGY_MODEL", "agy-default")
+
+    def is_available(self) -> bool:
+        return shutil.which("agy") is not None
+
+    def generate(self, prompt: str, timeout: int = 240) -> str:
+        if not self.is_available():
+            raise RuntimeError("Antigravity CLI ('agy') not found in PATH")
+        cmd = ["agy", "--output-format", "text", "--print"]
+        if self.model and self.model != "agy-default":
+            cmd.extend(["--model", self.model])
+        cmd.append(prompt)
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"Antigravity CLI ('agy') failed: {res.stderr.strip()}")
+        return res.stdout.strip()
+
+
+AgyCliProvider = AgyProvider
 
 
 class MockProvider(AgentProvider):
@@ -269,6 +310,7 @@ class ProviderRegistry:
         self.register(ClaudeCliProvider())
         self.register(CodexCliProvider())
         self.register(CursorProvider())
+        self.register(AgyProvider())
         self.register(OmpProvider())
 
         # Generic OpenAI / OpenRouter
@@ -312,6 +354,8 @@ class ProviderRegistry:
             clean_id = "claude"
         elif clean_id in ("cursor-agent",):
             clean_id = "cursor"
+        elif clean_id in ("antigravity", "antigravity-cli", "antigravity_cli"):
+            clean_id = "agy"
         return self._providers.get(clean_id)
 
     def list_available(self, include_mock: bool = False) -> List[AgentProvider]:

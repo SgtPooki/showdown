@@ -101,7 +101,7 @@ def test_cli_providers_availability_and_invocation():
             cursor = CursorProvider()
             assert cursor.is_available() is True
             cursor.generate("hello cursor")
-            assert mock_run.call_args[0][0][:4] == ["cursor-agent", "-p", "--output-format", "text"]
+            assert mock_run.call_args[0][0][:6] == ["cursor-agent", "-p", "--mode", "ask", "--output-format", "text"]
 
             omp = OmpProvider()
             assert omp.is_available() is True
